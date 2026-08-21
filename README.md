@@ -26,9 +26,10 @@ code/         librairie + scripts
   snooze_swap.py              exemple de countdown en place sur une seule ad
 
 agents/       définitions d'agents Claude Code (pipeline analyse -> création -> déploiement)
-  meta-analyse.md
+  meta-analyse.md         diagnostic de performance (saturation, gagnants/perdants), aucune écriture
   meta-creation.md
   meta-deploy.md
+  meta-tracking-audit.md  diagnostic du tracking (pixel, CAPI, dédup, EMQ), aucune écriture
 ```
 
 ## Prérequis
@@ -97,16 +98,20 @@ explicitement).
 
 ### 5. Premier run
 
-1. Lisez `doctrines/andromeda-strategy.md` en entier (c'est la doctrine que
-   les agents appliquent).
-2. Demandez à l'agent **meta-analyse** un diagnostic sur une campagne
+1. Lisez `doctrines/andromeda-strategy.md` et `doctrines/meta-tracking-doctrine.md`
+   en entier (c'est la doctrine que les agents appliquent).
+2. Avant de faire confiance à un seul chiffre : demandez à l'agent
+   **meta-tracking-audit** un diagnostic de votre tracking (pixel, CAPI, dédup,
+   qualité de correspondance). Un coût par résultat n'a de sens que si le
+   tracking derrière est fiable.
+3. Demandez ensuite à l'agent **meta-analyse** un diagnostic sur une campagne
    existante (il ne fait AUCUNE écriture, c'est l'entrée en matière la plus
    sûre pour valider que votre config fonctionne).
-3. Quand vous êtes prêt à builder un batch : préparez un dossier de créas et
+4. Quand vous êtes prêt à builder un batch : préparez un dossier de créas et
    invoquez **meta-creation**. Il produit un manifeste JSON dans
    `manifests/` (créez ce dossier s'il n'existe pas) et le fait valider par
    `code/validate_manifest.py` avant de vous le présenter pour approbation.
-4. Une fois le manifeste approuvé : invoquez **meta-deploy** pour l'exécuter
+5. Une fois le manifeste approuvé : invoquez **meta-deploy** pour l'exécuter
    contre la Graph API. Tout est déployé `PAUSED` par défaut.
 
 ## Ce que ce repo n'est PAS
