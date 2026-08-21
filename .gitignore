@@ -1,0 +1,10 @@
+*token*
+*.env
+*.log
+__pycache__/
+*.pyc
+snapshots/
+manifests/*.deploy.json
+manifests/*.deploy-result.json
+manifests/*.journal.json
+*.bak*
