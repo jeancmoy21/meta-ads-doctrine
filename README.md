@@ -83,7 +83,7 @@ python3 code/meta_lib.py
 
 ### 4. Installer les agents dans Claude Code
 
-Copiez les 3 fichiers d'agents dans votre dossier d'agents Claude Code
+Copiez les 4 fichiers d'agents dans votre dossier d'agents Claude Code
 personnel ou de projet (`~/.claude/agents/` pour un usage global, ou
 `.claude/agents/` à la racine d'un projet) :
 
