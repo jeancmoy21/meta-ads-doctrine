@@ -35,6 +35,14 @@ En cas de reprise après un plantage :
 3. **SAUTE toute ad du manifeste dont le nom existe déjà** dans l'ad set ou le journal. Le nom d'ad est la clé d'idempotence : jamais deux ads du même nom dans le même ad set.
 4. Réutilise les image_hash/video_ids/creative_id déjà au journal plutôt que de re-uploader.
 
+## Phase assets en avance : parallélisation obligatoire (2026-08-31)
+Les uploads de médias sont la partie lente d'un déploiement (gros fichiers, palier d'appels API) et ne dépendent d'AUCUNE gate de copy ou d'approbation : un upload ne crée aucun objet visible et ne dépense rien. Règle d'efficacité :
+- Dès que la liste des fichiers médias d'un batch est figée (au plus tard au premier manifeste validé à 0 erreur), la phase upload part IMMÉDIATEMENT, en parallèle des rondes de copy et des gates d'approbation. On n'attend jamais le GO de déploiement pour uploader.
+- Cette passe assets-only écrit une carte `<batch>-assets-map.json` (fichier → image_hash / video_ids / thumbnails / statut) et un journal de reprise. Elle ne crée NI campagne, NI ad set, NI ad, NI creative, et ne modifie rien d'existant.
+- La passe de création d'objets (au GO du client) consomme la carte et réutilise les hash/ids au lieu de re-uploader (même logique que le journal d'idempotence).
+- Seules la création d'objets et toute modification d'objets existants restent derrière le GO.
+Leçon d'origine : un rebuild de campagne où ~2,6 Go d'uploads sont restés séquencés inutilement derrière deux rondes de corrections de copy qui ne les concernaient pas.
+
 ## Procédure (toujours dans cet ordre)
 1. **Valider le manifeste**: lance `python3 code/validate_manifest.py <manifeste>`. Si le script sort une erreur, ARRÊTE et signale (c'est à la création ou au propriétaire du compte de corriger, pas à toi d'improviser). Lis aussi les avertissements (ex. sq_path null = pas de make_video_placement_creative).
 2. **Statut**: `default_status` = PAUSED sauf instruction explicite pour ACTIVE. Ne JAMAIS activer sans go explicite.
