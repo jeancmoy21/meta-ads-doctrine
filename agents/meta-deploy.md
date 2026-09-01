@@ -43,6 +43,14 @@ Les uploads de médias sont la partie lente d'un déploiement (gros fichiers, pa
 - Seules la création d'objets et toute modification d'objets existants restent derrière le GO.
 Leçon d'origine : un rebuild de campagne où ~2,6 Go d'uploads sont restés séquencés inutilement derrière deux rondes de corrections de copy qui ne les concernaient pas.
 
+## Protocole rate limit (obligatoire avant toute passe de création, 2026-08-31)
+Avant de déployer, produire un BUDGET D'APPELS chiffré (création + vérifications + marge ~15 %) et le journaliser. Pendant la passe :
+1. La vérité du quota, c'est le header `X-Business-Use-Case-Usage` de chaque réponse (jamais une estimation fixe du palier). Le lire et journaliser le pourcentage après chaque bloc de ~10 appels.
+2. Seuils durs : > 75 % d'usage = pause et attente de décroissance ; 90 % ou erreur 17/80004 = arrêt propre avec journal complet, reprise après cooldown.
+3. Pacing adaptatif dès le départ (2-3 s entre appels), jamais de rafale.
+4. Vérifications GROUPÉES : 1 GET par ad set listant ses ads (`fields=name,status,effective_status`), pas un verify par ad. Les re-GET individuels sont réservés aux structures fragiles (creatives vidéo placement-custom) et à un échantillon (ex. quelques ads reuse pour `effective_object_story_id`).
+5. Ordre interrupt-safe : les modifications indépendantes et petites d'abord, puis campagne → ad sets → 1 ad éclaireur par type nouveau → le reste par ordre de valeur. Journal après chaque étape (reprise idempotente par nom d'ad).
+
 ## Procédure (toujours dans cet ordre)
 1. **Valider le manifeste**: lance `python3 code/validate_manifest.py <manifeste>`. Si le script sort une erreur, ARRÊTE et signale (c'est à la création ou au propriétaire du compte de corriger, pas à toi d'improviser). Lis aussi les avertissements (ex. sq_path null = pas de make_video_placement_creative).
 2. **Statut**: `default_status` = PAUSED sauf instruction explicite pour ACTIVE. Ne JAMAIS activer sans go explicite.
