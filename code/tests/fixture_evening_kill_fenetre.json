@@ -1,0 +1,71 @@
+{
+ "now": "2026-11-02T21:30:00-05:00",
+ "config": {
+  "cible_cpic": 50,
+  "date_lancement": "2026-11-01T00:00:00-05:00",
+  "budget_jour": 400
+ },
+ "baseline": [],
+ "insights": [
+  {
+   "ad_name": "A",
+   "adset_name": "S1",
+   "spend": "300",
+   "frequency": "1.5",
+   "actions": [
+    {
+     "action_type": "offsite_conversion.fb_pixel_initiate_checkout",
+     "value": "20"
+    }
+   ]
+  },
+  {
+   "ad_name": "E",
+   "adset_name": "S1",
+   "spend": "400",
+   "frequency": "1.5",
+   "actions": [
+    {
+     "action_type": "offsite_conversion.fb_pixel_initiate_checkout",
+     "value": "3"
+    }
+   ]
+  },
+  {
+   "ad_name": "C",
+   "adset_name": "S1",
+   "spend": "100",
+   "frequency": "1.5",
+   "actions": []
+  },
+  {
+   "ad_name": "B",
+   "adset_name": "S2",
+   "spend": "120",
+   "frequency": "1.5",
+   "actions": []
+  }
+ ],
+ "ads": [
+  {
+   "id": "id_A",
+   "name": "A",
+   "effective_status": "ACTIVE"
+  },
+  {
+   "id": "id_E",
+   "name": "E",
+   "effective_status": "ACTIVE"
+  },
+  {
+   "id": "id_C",
+   "name": "C",
+   "effective_status": "ACTIVE"
+  },
+  {
+   "id": "id_B",
+   "name": "B",
+   "effective_status": "ACTIVE"
+  }
+ ]
+}

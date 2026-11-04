@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-meta_lib.py — Librairie Meta Marketing API pour la gestion de campagnes.
+meta_lib.py, Librairie Meta Marketing API pour la gestion de campagnes.
 Encode des recettes confirmées en production pour ne plus jamais re-débugger
 les mêmes erreurs Graph API (voir api/meta-api-errors.md).
 
@@ -219,7 +219,7 @@ def make_static_creative(name, image_hash, utm, bodies, titles, descriptions, ct
     if err: raise RuntimeError(f"static creative {name}: {err}")
     return r["id"]
 
-# Placements verticaux (9:16) — le reste tombe dans la règle défaut (carré).
+# Placements verticaux (9:16), le reste tombe dans la règle défaut (carré).
 VERT_PLACEMENTS = {
     "publisher_platforms": ["facebook", "instagram", "messenger"],
     "facebook_positions": ["story", "facebook_reels", "facebook_reels_overlay"],
@@ -453,7 +453,7 @@ def make_static_simple(name, image_hash, utm, body, title, description, cta=DEFA
 #   { ad_name: {"ad_id": str|None, "ic_at_kill": float,
 #               "killed_at": iso8601, "by": str} }
 # Compat ascendante : les vieilles entrées (kills manuels) peuvent ne pas
-# avoir "ad_id" — l'absence est gérée gracieusement (re-résolu par nom).
+# avoir "ad_id", l'absence est gérée gracieusement (re-résolu par nom).
 
 KILL_REGISTRY = os.path.expanduser(os.environ.get("META_KILL_REGISTRY", "~/.meta_ads/killed_ads.json"))
 
@@ -546,9 +546,151 @@ def check_backtrack(registry_path, campaign_id, gained_threshold):
     return reactivated
 
 
+# ---------- Règles de seuil, de fenêtre et de plafonnement (rev. 2026-11) ----------
+# Fonctions pures (aucun appel réseau) sauf mention. Marque [rev. 2026-11].
+SEUIL_ZERO_IC = 2.0        # [rev. 2026-11] kill a 0 IC des 2x cible_cpic dépensés
+SEUIL_ECART = 3.0          # [rev. 2026-11] kill des 3x cible_cpic si cout/IC > 1,5x cible
+ECART_MAX = 1.5            # [rev. 2026-11] "plus de 50 % au-dessus de la cible"
+TOLERANCE_CIBLE = 0.10     # une campagne "tient sa cible" si cout/IC <= cible x 1,10
+PART_DOMINANTE = 0.30      # [rev. 2026-11] ad ou ad set a plus de 30 % de la depense
+
+def fenetre_min(date_lancement, cible_cpic, budget_jour):
+    """[rev. 2026-11] Fenêtre minimale avant tout kill, en JOURS (float) :
+    le plus grand de 3 jours ou du temps pour depenser 10 IC au cout cible
+    (10 * cible_cpic / budget_jour). date_lancement est accepté pour la signature
+    canonique et la cohérence d'appel (la durée ne depend pas de la date; voir
+    fenetre_ecoulee pour le test a une date donnee)."""
+    if not budget_jour or budget_jour <= 0:
+        return 3.0
+    return max(3.0, 10.0 * float(cible_cpic) / float(budget_jour))
+
+def fenetre_ecoulee(date_lancement, cible_cpic, budget_jour, now=None):
+    """True si fenetre_min est passee depuis date_lancement (datetime ou ISO)."""
+    if isinstance(date_lancement, str):
+        date_lancement = datetime.datetime.fromisoformat(date_lancement)
+    now = now or datetime.datetime.now(date_lancement.tzinfo)
+    jours = (now - date_lancement).total_seconds() / 86400.0
+    return jours >= fenetre_min(date_lancement, cible_cpic, budget_jour)
+
+def seuil_kill_relatif(cible_cpic, spend, ic):
+    """[rev. 2026-11] Deux paliers sur la depense CUMULEE :
+    (1) spend >= 2x cible et 0 IC ; (2) spend >= 3x cible et cout/IC > 1,5x cible.
+    Sous 2x cible dépensés : jamais. Retourne (kill: bool, raison: str)."""
+    if spend < SEUIL_ZERO_IC * cible_cpic:
+        return False, "sous 2x cible_cpic dépensés"
+    if ic <= 0:
+        return True, f"{spend:.0f}$ >= 2x cible ({SEUIL_ZERO_IC * cible_cpic:.0f}$) et 0 IC"
+    cpic = spend / ic
+    if spend >= SEUIL_ECART * cible_cpic and cpic > ECART_MAX * cible_cpic:
+        return True, (f"{spend:.0f}$ >= 3x cible et cout/IC {cpic:.0f}$ > "
+                      f"1,5x cible ({ECART_MAX * cible_cpic:.0f}$)")
+    return False, "seuils non atteints"
+
+def campagne_tient_cible(cible_cpic, camp):
+    """camp = {"sp":..., "ic":...}. Vrai si IC > 0 et cout/IC <= cible x (1 + TOLERANCE_CIBLE)."""
+    return camp["ic"] > 0 and camp["sp"] / camp["ic"] <= cible_cpic * (1 + TOLERANCE_CIBLE)
+
+def palier_plafond(part_actuelle, palier=0.10):
+    """[rev. 2026-11] Plafond en part de la depense de campagne, par paliers de
+    10 a 20 points sous la part actuelle (palier dans [0.10, 0.20])."""
+    palier = min(max(palier, 0.10), 0.20)
+    return max(round(part_actuelle - palier, 2), 0.05)
+
+def evaluer_cascade(cible_cpic, camp, adsets, ads, ad_adset, whitelist=()):
+    """[rev. 2026-11] Campagne d'abord, puis ad set, puis ad. Entrées :
+    camp {"sp","ic"}; adsets {nom:{"sp","ic"}}; ads {nom:{"sp","ic"}}; ad_adset {ad:adset}.
+    Retourne une liste de décisions {niveau, nom, action, raison} ; action = KILL
+    (ad), RECO_KILL (ad set : recommandation, jamais exécutée), PLAFOND (reco de
+    plafond, jamais un kill) ou TENIR. Si la campagne tient sa cible, tout ad ou ad
+    set a plus de 30 % de la depense (ou no 1 en depense) est plafonne, pas tue."""
+    out = []
+    tient = campagne_tient_cible(cible_cpic, camp)
+    k, why = seuil_kill_relatif(cible_cpic, camp["sp"], camp["ic"])
+    out.append({"niveau": "campagne", "nom": "campagne", "action": "TENIR",
+                "raison": ("tient la cible" if tient else
+                           ("rate la cible : " + why if k else "ne tient pas la cible, seuils de kill non atteints"))})
+    tot = camp["sp"] or 1.0
+
+    def juger(niveau, nom, d, rang1):
+        kill, raison = seuil_kill_relatif(cible_cpic, d["sp"], d["ic"])
+        part = d["sp"] / tot
+        if not kill:
+            return {"niveau": niveau, "nom": nom, "action": "TENIR", "raison": raison}
+        if tient and (part > PART_DOMINANTE or rang1):
+            return {"niveau": niveau, "nom": nom, "action": "PLAFOND",
+                    "raison": f"campagne tient la cible, part {part:.0%} : plafonner à "
+                              f"{palier_plafond(part):.0%} de la depense, pas de kill ({raison})"}
+        return {"niveau": niveau, "nom": nom,
+                "action": "RECO_KILL" if niveau == "adset" else "KILL", "raison": raison}
+
+    no1_adset = max(adsets, key=lambda n: adsets[n]["sp"]) if adsets else None
+    no1_ad = max(ads, key=lambda n: ads[n]["sp"]) if ads else None
+    adsets_tues = set()
+    for nom, d in adsets.items():
+        dec = juger("adset", nom, d, nom == no1_adset)
+        out.append(dec)
+        if dec["action"] == "RECO_KILL":
+            adsets_tues.add(nom)
+    for nom, d in ads.items():
+        if nom in whitelist or ad_adset.get(nom) in adsets_tues:
+            continue
+        out.append(juger("ad", nom, d, nom == no1_ad))
+    return out
+
+def make_creative_from_post(name, object_story_id, opt_out_visuel=False):
+    """[rev. 2026-11] Creative sur un post EXISTANT (object_story_id =
+    '<page_id>_<post_id>') : garde la preuve sociale. ECRITURE (POST adcreatives) : a
+    n'appeler que sur instruction. opt_out_visuel=True ajoute un opt-out explicite des
+    enhancements visuels [NON VERIFIE live] (defaut False : le post garde son contenu)."""
+    params = {"name": name, "object_story_id": object_story_id, "access_token": token()}
+    if opt_out_visuel:
+        params["degrees_of_freedom_spec"] = json.dumps(refuse_visual_enhancements({
+            "creative_features_spec": {k: {"enroll_status": "OPT_OUT"}
+                                       for k in VISUAL_ENHANCEMENT_FEATURES}}))
+    r, err = _post(f"{ACCOUNT}/adcreatives", params)   # [NON VERIFIE live] object_story_id
+    if err: raise RuntimeError(f"creative from post {name}: {err}")
+    return r["id"]
+
+def create_ad_from_post(name, adset_id, object_story_id, status="PAUSED", opt_out_visuel=False):
+    """[rev. 2026-11] Ad à partir d'un post ID existant. PAUSED par defaut."""
+    return create_ad(name, adset_id, make_creative_from_post(name, object_story_id, opt_out_visuel), status)
+
+# [rev. 2026-11] Enhancements qui modifient l'image ou la video : refusés.
+# Noms de features [NON VERIFIE live] (Advantage+ creative, creative_features_spec).
+# Texte et CTA restent permis. 'standard_enhancements' (déprécié, subcode 3858504) est
+# déjà retiré par _clean_recreate_spec : on ne le touche pas.
+VISUAL_ENHANCEMENT_FEATURES = ("image_brightness_and_contrast", "image_templates",
+                               "image_touchups", "image_uncrop", "video_auto_crop")
+
+def refuse_visual_enhancements(dof):
+    """Leve ValueError si un enhancement VISUEL est OPT_IN dans un
+    degrees_of_freedom_spec ; retourne dof tel quel sinon (verifie, ne modifie pas)."""
+    cfs = ((dof or {}).get("creative_features_spec")) or {}
+    for k in VISUAL_ENHANCEMENT_FEATURES:
+        if (cfs.get(k) or {}).get("enroll_status") == "OPT_IN":
+            raise ValueError(f"enhancement visuel refuse : {k} OPT_IN [rev. 2026-11]")
+    return dof
+
+def set_adset_spend_cap(adset_id, daily_spend_cap_cad=None, daily_min_spend_target_cad=None, go=False):
+    """[rev. 2026-11] Spending limits d'ad set sous CBO. Champs
+    daily_spend_cap [NON VERIFIE live] et daily_min_spend_target (en cents, confirmé
+    en création CBO). Montants en CAD, convertis en cents.
+    Sans go=True : retourne les params SANS écrire (aucun POST)."""
+    params = {}
+    if daily_spend_cap_cad is not None:
+        params["daily_spend_cap"] = int(round(daily_spend_cap_cad * 100))
+    if daily_min_spend_target_cad is not None:
+        params["daily_min_spend_target"] = int(round(daily_min_spend_target_cad * 100))
+    if not go:
+        return {"dry_run": True, "adset_id": adset_id, "params": params}
+    r, err = _post(adset_id, dict(params, access_token=token()))
+    if err: raise RuntimeError(f"set_adset_spend_cap {adset_id}: {err}")
+    return r
+
+
 # ---------- Ads ----------
 def create_ad(name, adset_id, creative_id, status="PAUSED"):
-    """Crée l'ad. DEFAULT PAUSED — passer ACTIVE seulement sur instruction explicite."""
+    """Crée l'ad. DEFAULT PAUSED, passer ACTIVE seulement sur instruction explicite."""
     r, err = _post(f"{ACCOUNT}/ads", {
         "name": name, "adset_id": adset_id,
         "creative": json.dumps({"creative_id": creative_id}),

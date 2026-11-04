@@ -1,38 +1,64 @@
 #!/usr/bin/env python3
 """Exemple de re-check autonome (ex. le soir après une redistribution de budget) :
-kill les money-pits révélés depuis une baseline, avec whitelist et journal.
+backtrack des ads coupées à tort, puis kill selon le seuil relatif à `cible_cpic`
+(cascade campagne > ad set > ad), après `fenetre_min`, avec whitelist et journal.
 Compare le pull actuel à un snapshot baseline (produit par pull_insights.py).
 
-Voir meta-campaign-lifecycle.md section 2 (kill + backtrack) et
-meta_lib.record_kill / meta_lib.check_backtrack, qui encapsulent cette même
-logique proprement — ce script montre la version "à la main", conservée ici
-comme référence historique de ce que ces helpers remplacent.
+Voir doctrines/meta-campaign-lifecycle.md section 2 (kill + backtrack) et
+meta_lib.record_kill / meta_lib.check_backtrack, qui encapsulent la logique de
+registre. Ce script montre la version "à la main", conservée comme référence.
 
-Usage: evening_kill.py <campaign_id> <baseline_label> [output_label]
+Usage: evening_kill.py [options] <campaign_id> <baseline_label> [output_label]
   baseline_label : nom du snapshot de référence (ex. 'samedi_pm')
   output_label   : nom du snapshot produit par ce run (défaut 'evening_check')
 
+Options (retirées de argv avant les positionnels) [rev. 2026-11] :
+  --dry-run                 aucune écriture (ni Graph API, ni registre, ni log disque)
+  --fixture <json>          aucun appel API (implique --dry-run) ; voir tests/fixture_evening_kill.json
+  --cible-cpic N            coût cible par IC (prime sur l'environnement)
+  --date-lancement ISO      date de lancement de la campagne (prime sur l'environnement)
+  --budget-jour N           budget quotidien de la campagne en $ (sinon lu sur la campagne)
+
 Config par variables d'environnement :
-  META_KILL_MIN_SPEND       $ brûlés depuis la baseline avant de considérer un kill (défaut 150)
+  META_KILL_CIBLE_CPIC      coût cible par IC (OBLIGATOIRE si pas de --cible-cpic)
+  META_KILL_DATE_LANCEMENT  date de lancement ISO (OBLIGATOIRE si pas de --date-lancement)
+  META_KILL_BUDGET_JOUR     budget quotidien en $ (optionnel)
   META_KILL_BACKTRACK_IC    IC gagnés en différé depuis un kill -> on rouvre (défaut 2)
   META_KILL_WHITELIST       noms d'ads à ne jamais toucher, séparés par des virgules
+
+Aucune valeur par défaut silencieuse pour la cible et la date : absent = arrêt clair.
 """
 import sys, os, json, datetime
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import meta_lib as m
 
-if len(sys.argv) < 3:
+
+def _flag(name, has_value=True):
+    if name not in sys.argv:
+        return None if has_value else False
+    i = sys.argv.index(name)
+    if not has_value:
+        sys.argv.pop(i); return True
+    v = sys.argv[i + 1]; del sys.argv[i:i + 2]; return v
+
+DRY = _flag("--dry-run", False)
+FIXTURE = _flag("--fixture")
+F_CIBLE, F_DATE, F_BUDGET = _flag("--cible-cpic"), _flag("--date-lancement"), _flag("--budget-jour")
+if FIXTURE:
+    DRY = True
+    FX = json.load(open(FIXTURE))
+
+if len(sys.argv) < 3 and not FIXTURE:
     print(__doc__); raise SystemExit(2)
 
-CAMPAIGN = sys.argv[1]
-BASE = sys.argv[2]
+CAMPAIGN = sys.argv[1] if len(sys.argv) > 1 else "fixture"
+BASE = sys.argv[2] if len(sys.argv) > 2 else "baseline"
 OUT = sys.argv[3] if len(sys.argv) > 3 else "evening_check"
 
 SNAPDIR = os.path.expanduser(os.environ.get("META_SNAPSHOT_DIR", "~/.meta_ads/snapshots"))
 LOG = os.path.expanduser(os.environ.get("META_JOB_LOG", "~/.meta_ads/evening_kill.log"))
 PM = os.path.join(SNAPDIR, f"{BASE}.json")
 REG = m.KILL_REGISTRY
-MIN_SPEND = float(os.environ.get("META_KILL_MIN_SPEND", "150"))
 BACKTRACK_IC = float(os.environ.get("META_KILL_BACKTRACK_IC", "2"))
 WHITELIST = {n.strip() for n in os.environ.get("META_KILL_WHITELIST", "").split(",") if n.strip()}
 
@@ -40,15 +66,36 @@ WHITELIST = {n.strip() for n in os.environ.get("META_KILL_WHITELIST", "").split(
 def log(msg):
     line = f"{datetime.datetime.now().isoformat()} {msg}"
     print(line)
-    with open(LOG, "a") as f: f.write(line + "\n")
+    if not DRY:
+        os.makedirs(os.path.dirname(LOG), exist_ok=True)
+        with open(LOG, "a") as f: f.write(line + "\n")
 
+
+# [rev. 2026-11] cible_cpic et date_lancement OBLIGATOIRES (flags, environnement ou fixture).
+_cfg = dict(FX.get("config", {})) if FIXTURE else {}
+CIBLE_CPIC = F_CIBLE or os.environ.get("META_KILL_CIBLE_CPIC") or _cfg.get("cible_cpic")
+DATE_LANCEMENT = F_DATE or os.environ.get("META_KILL_DATE_LANCEMENT") or _cfg.get("date_lancement")
+if not CIBLE_CPIC or not DATE_LANCEMENT:
+    sys.exit("ERREUR: cible_cpic et date_lancement obligatoires (--cible-cpic/--date-lancement "
+             "ou META_KILL_CIBLE_CPIC/META_KILL_DATE_LANCEMENT). Aucun kill sans cible [rev. 2026-11].")
+CIBLE_CPIC = float(CIBLE_CPIC)
+DATE_LANCEMENT = datetime.datetime.fromisoformat(DATE_LANCEMENT)
+NOW = datetime.datetime.fromisoformat(FX["now"]) if FIXTURE and FX.get("now") else datetime.datetime.now(DATE_LANCEMENT.tzinfo)
 
 log("=== evening re-check start ===")
 
-pm = {r["n"]: r for r in json.load(open(PM))["rows"]}
+pm = {r["n"]: r for r in (FX["baseline"] if FIXTURE else json.load(open(PM))["rows"])}
 
-flds = "ad_name,spend,frequency,actions"
-r, err = m._get(f"{CAMPAIGN}/insights", {"level": "ad", "fields": flds, "limit": 200})
+flds = "ad_name,adset_name,spend,frequency,actions"
+if FIXTURE:
+    r, err = {"data": FX["insights"]}, None
+else:
+    r, err = m._get(f"{CAMPAIGN}/insights",
+                    {"level": "ad", "fields": flds,
+                     # fenêtre calculée : date_lancement -> aujourd'hui (vie complète)
+                     "time_range": json.dumps({"since": DATE_LANCEMENT.date().isoformat(),
+                                               "until": datetime.date.today().isoformat()}),
+                     "limit": 200})
 if err:
     log(f"ERR insights {err}"); raise SystemExit(1)
 
@@ -63,7 +110,10 @@ def ic(acts):
 now = {d["ad_name"]: {"sp": float(d.get("spend", 0)), "ic": ic(d.get("actions")),
                       "fr": float(d.get("frequency", 0))} for d in r.get("data", [])}
 
-ra, _ = m._get(f"{CAMPAIGN}/ads", {"fields": "id,name,status,effective_status", "limit": 200})
+if FIXTURE:
+    ra = {"data": FX["ads"]}
+else:
+    ra, _ = m._get(f"{CAMPAIGN}/ads", {"fields": "id,name,status,effective_status", "limit": 200})
 ids = {d["name"]: d["id"] for d in ra.get("data", [])}
 live = {d["name"]: d["id"] for d in ra.get("data", [])
         if d.get("effective_status") == "ACTIVE"}
@@ -76,40 +126,72 @@ for name, info in list(reg.items()):
         continue
     gained = cur["ic"] - info.get("ic_at_kill", 0)
     log(f"  [backtrack] {name[:46]:46} IC kill={info.get('ic_at_kill',0)} -> now={cur['ic']:.0f} (+{gained:.0f})")
-    if gained >= BACKTRACK_IC and ids.get(name):
+    if gained >= BACKTRACK_IC and ids.get(name) and DRY:
+        log(f"  [dry-run] REACTIVATE {name[:46]} (+{gained:.0f} IC différés)")
+    elif gained >= BACKTRACK_IC and ids.get(name):
         rr, e = m._post(ids[name], {"status": "ACTIVE", "access_token": m.token()})
         ok = "OK" if not e else f"ERR {str(e)[:80]}"
         log(f"  REACTIVATE {name[:46]:46} (+{gained:.0f} IC différés) -> {ok}")
         if not e:
             reg.pop(name, None)
-json.dump(reg, open(REG, "w"), ensure_ascii=False, indent=1)
+if not DRY:
+    os.makedirs(os.path.dirname(REG) or ".", exist_ok=True)
+    json.dump(reg, open(REG, "w"), ensure_ascii=False, indent=1)
+
+# --- PASS 2 : fenêtre minimale, puis cascade campagne > ad set > ad [rev. 2026-11] ---
+# Dépense CUMULÉE (seuil relatif à cible_cpic) ; plafond au lieu de kill pour une ad
+# dominante quand la campagne tient sa cible.
+if FIXTURE:
+    budget_jour = float(F_BUDGET or os.environ.get("META_KILL_BUDGET_JOUR") or _cfg.get("budget_jour") or FX.get("budget_jour", 0))
+else:
+    budget_jour = float(F_BUDGET or os.environ.get("META_KILL_BUDGET_JOUR") or 0)
+    if not budget_jour:
+        _c, _ = m._get(CAMPAIGN, {"fields": "daily_budget"})
+        budget_jour = float((_c or {}).get("daily_budget", 0)) / 100.0
+fen = m.fenetre_min(DATE_LANCEMENT, CIBLE_CPIC, budget_jour)
+jours = (NOW - DATE_LANCEMENT).total_seconds() / 86400.0
+log(f"  fenetre_min={fen:.2f} j (budget {budget_jour:.0f}$/j, cible {CIBLE_CPIC:.0f}$/IC); écoulé={jours:.2f} j")
+
+adset_of = {d["ad_name"]: d.get("adset_name") for d in r.get("data", [])}
+adsets_cum = {}
+for n, v in now.items():
+    a = adsets_cum.setdefault(adset_of.get(n) or "?", {"sp": 0.0, "ic": 0.0})
+    a["sp"] += v["sp"]; a["ic"] += v["ic"]
+camp_cum = {"sp": sum(v["sp"] for v in now.values()), "ic": sum(v["ic"] for v in now.values())}
 
 candidates = []
-for name, adid in live.items():
-    if name in WHITELIST:
-        continue
-    base = pm.get(name, {"sp": 0, "ic": 0})
-    cur = now.get(name)
-    if not cur:
-        continue
-    d_sp = cur["sp"] - base["sp"]
-    d_ic = cur["ic"] - base["ic"]
-    log(f"  live {name[:46]:46} depuis baseline: +{d_sp:6.0f}$  +{d_ic:.0f}IC  freq={cur['fr']:.2f}")
-    if d_sp >= MIN_SPEND and d_ic == 0:
-        candidates.append((name, adid, d_sp, cur["fr"]))
+if jours < fen:
+    log(f"  AUCUN KILL : fenetre_min pas écoulée ({jours:.2f} j < {fen:.2f} j) [rev. 2026-11]")
+    decisions = []
+else:
+    decisions = m.evaluer_cascade(CIBLE_CPIC, camp_cum, adsets_cum,
+                                  {n: v for n, v in now.items() if n in live},
+                                  adset_of, WHITELIST)
+for d in decisions:
+    log(f"  [{d['niveau']}] {d['nom'][:46]:46} {d['action']}: {d['raison']}")
+    if d["niveau"] == "ad" and d["action"] == "KILL":
+        candidates.append((d["nom"], live[d["nom"]], now[d["nom"]]["sp"], now[d["nom"]]["fr"]))
 
 killed = []
 for name, adid, d_sp, fr in candidates:
+    if DRY:
+        log(f"  [dry-run] KILL {name[:46]:46} (cumul {d_sp:.0f}$) -> aucune écriture")
+        continue
     rr, e = m._post(adid, {"status": "PAUSED", "access_token": m.token()})
     ok = "OK" if not e else f"ERR {str(e)[:80]}"
-    log(f"  KILL {name[:46]:46} (+{d_sp:.0f}$ depuis baseline, 0 IC) -> {ok}")
+    log(f"  KILL {name[:46]:46} (cumul {d_sp:.0f}$, seuil relatif) -> {ok}")
     if not e:
         killed.append(name)
-        reg[name] = {"ic_at_kill": now.get(name, {}).get("ic", 0),
+        reg[name] = {"ad_id": adid, "ic_at_kill": now.get(name, {}).get("ic", 0),
                      "killed_at": datetime.datetime.now().isoformat(), "by": "evening-check"}
-json.dump(reg, open(REG, "w"), ensure_ascii=False, indent=1)
+if not DRY:
+    json.dump(reg, open(REG, "w"), ensure_ascii=False, indent=1)
 
 log(f"=== done: {len(killed)} killed / {len(candidates)} candidats ===")
+
+if DRY:
+    raise SystemExit(0)   # [dry-run] ni snapshot ni écriture
+
 
 def g(acts, t):
     for a in acts or []:

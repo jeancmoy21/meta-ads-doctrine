@@ -30,6 +30,23 @@ Garde-fous bloquants :
   (voir SCHEMA.md, section "Routage des ads vers les ad sets")
 - AVERTISSEMENT : campagne sans end_time (borne temporelle)
 
+Garde-fous ajoutés en rev. 2026-11 (marque [rev. 2026-11]). Champs de manifeste NOUVEAUX
+(à reporter dans SCHEMA.md) :
+- racine `cible_cpic` (nombre > 0) : OBLIGATOIRE. Coût cible par IC ; le seuil de kill relatif
+  et `fenetre_min` en dépendent.
+- ad set `daily_min_spend_target_cad` (optionnel) : somme <= 20 % du budget CBO.
+- racine `pack_type` : "neuf" (défaut), "iteration" ou "prouve". Un pack neuf = 4 à 8 ads.
+- ad `message_id`, `asset_id` (optionnels) : plafonds par asset (3 messages distincts) et par message.
+- ad `message_statut` : "nouveau" (plafond 2 ads par message) ou "prouve" (3 à 6 permis).
+- ad set `avatar` + `avatar_statut` ("neuf"|"prouve") : plus de 2 avatars neufs = AVERTISSEMENT.
+- racine `exclusions_roles` {audience_id: rôle} : en prospection, tout rôle hors de
+  EXCLUSION_ROLES_ALLOWED (défaut : registered, buyers ; variable d'environnement
+  META_EXCLUSION_ROLES_ALLOWED, séparée par des virgules) = ERREUR. Un ad set `tier` =
+  "retargeting" ou "remarketing" est exempté.
+- racine `conversions_disponibles` {"achat": bool, "lead_qualifie": bool} : si vrai et que
+  l'optimisation reste sur IC ou lead brut = AVERTISSEMENT, nouvel ad set requis.
+Escape hatches sous _meta : pack_size_approved, minimums_approved, engagement_exclusion_approved.
+
 Le tableau de sévérité réelle de CHAQUE règle vit dans SCHEMA.md, section
 "Ce que le validateur applique VRAIMENT". Toute règle ajoutée ici doit y être
 reportée, et inversement.
@@ -66,6 +83,12 @@ BUDGET_MODES = ("CBO_DAILY_CAMPAIGN_LEVEL", "ABO_DAILY_ADSET_LEVEL")
 # ici : le validateur exige alors qu'il soit TOUJOURS le premier de la querystring
 # et qu'il n'apparaisse qu'une fois. Laisser vide si vous n'avez pas ce besoin.
 MESURE_QS_PARAMS = ()
+
+# [rev. 2026-11] Rôles d'audience exclus acceptés en PROSPECTION : les inscrits à
+# l'événement et les acheteurs, rien d'autre (aucune exclusion d'engagement large).
+EXCLUSION_ROLES_ALLOWED = tuple(
+    r.strip() for r in os.environ.get("META_EXCLUSION_ROLES_ALLOWED", "registered,buyers").split(",")
+    if r.strip())
 
 CHAMPS_COPY = ("body", "title", "description", "bodies", "titles", "descriptions",
                "message", "primary_text", "headline")
@@ -190,6 +213,24 @@ def validate_video(ad, i):
         if field in ad:
             err(f"{where}: champ pluriel '{field}' interdit sur une vidéo (1 seul texte)")
     return extract_utm_content(ad.get("utm"))
+
+
+def check_message_asset_fields(ad, where):
+    """Champs optionnels de hook-swap v2 : message_id, asset_id, message_statut.
+    Rétrocompatible : une ad qui n'en porte aucun n'est jamais signalée.
+    Retourne (message_id, asset_id) valides ou None."""
+    mid = ad.get("message_id")
+    if mid is not None and not (isinstance(mid, str) and mid.strip()):
+        err(f"{where}.message_id={mid!r} : doit être une chaîne non vide si présent.")
+        mid = None
+    aid = ad.get("asset_id")
+    if aid is not None and not (isinstance(aid, str) and aid.strip()):
+        err(f"{where}.asset_id={aid!r} : doit être une chaîne non vide si présent.")
+        aid = None
+    ms = ad.get("message_statut")
+    if ms is not None and ms not in ("nouveau", "prouve"):
+        err(f"{where}.message_statut={ms!r} : doit être 'nouveau' ou 'prouve' si présent [rev. 2026-11].")
+    return mid, aid
 
 
 def main():
@@ -388,7 +429,7 @@ def main():
     # personnalisée (custom_conversion_id) filtrée par URL. ERREUR si une
     # conversion bornée existe dans le manifeste et n'est pas utilisée ;
     # AVERTISSEMENT sinon. Ne s'applique évidemment que si votre pixel est
-    # partagé entre plusieurs offres — ignorez cette règle sinon.
+    # partagé entre plusieurs offres, ignorez cette règle sinon.
     blob = json.dumps(m, ensure_ascii=False)
     cc_dispo = "custom_conversion_id" in blob or "custom_conversion" in blob
     for i, a in enumerate(ad_sets_all):
@@ -596,14 +637,190 @@ def main():
 
     utms = []
     names = []
+    ads_infos = []
+    msg_statuts = {}   # [rev. 2026-11] message_id -> {message_statut, ...}
     for i, ad in enumerate(statics):
+        w = f"static_ads[{i}] ({ad.get('name', 'sans nom')})"
         utms.append(validate_static(ad, i))
         names.append(ad.get("name"))
-        check_url_utm(ad, f"static_ads[{i}] ({ad.get('name', 'sans nom')})")
+        check_url_utm(ad, w)
+        mid, aid = check_message_asset_fields(ad, w)
+        ads_infos.append((ad.get("name"), mid, aid))
+        if mid:
+            msg_statuts.setdefault(mid, set()).add(ad.get("message_statut"))
     for i, ad in enumerate(videos):
+        w = f"video_ads[{i}] ({ad.get('name', 'sans nom')})"
         utms.append(validate_video(ad, i))
         names.append(ad.get("name"))
-        check_url_utm(ad, f"video_ads[{i}] ({ad.get('name', 'sans nom')})")
+        check_url_utm(ad, w)
+        mid, aid = check_message_asset_fields(ad, w)
+        ads_infos.append((ad.get("name"), mid, aid))
+        if mid:
+            msg_statuts.setdefault(mid, set()).add(ad.get("message_statut"))
+
+    # ============================================================
+    # ENFORCEMENT MESSAGE / ASSET (hook-swap v2, révisé [rev. 2026-11]).
+    # Uniquement quand message_id et/ou asset_id sont présents :
+    #   (a) plus de 3 message_id DISTINCTS sur un même asset_id, dans un
+    #       même ad set = ERREUR (plafond banc/asset).
+    #   (b) plus de 2 ads sur un même message_id `nouveau`, dans un même ad
+    #       set = ERREUR ; un message `prouve` a droit à 3 à 6 itérations.
+    # Regroupement par ad set : mapping 'ad_routing' quand il existe, sinon
+    # un seul groupe. Une ad sans message_id ni asset_id n'entre dans aucun
+    # de ces comptes (rétrocompatibilité totale).
+    # ============================================================
+    if any(mid or aid for _, mid, aid in ads_infos):
+        groupes = {}
+        if isinstance(routing, dict) and routing:
+            cles_k = list(routing.keys())
+            for nom, mid, aid in ads_infos:
+                if not isinstance(nom, str):
+                    continue
+                matches = [c for c in cles_k if nom.endswith(c)]
+                if not matches:
+                    continue
+                cible_adset = routing[max(matches, key=len)]
+                groupes.setdefault(cible_adset, []).append((nom, mid, aid))
+        else:
+            groupes["ad set unique"] = list(ads_infos)
+
+        for cible_adset, items in groupes.items():
+            par_asset = {}
+            for nom, mid, aid in items:
+                if aid and mid:
+                    par_asset.setdefault(aid, {}).setdefault(mid, []).append(nom)
+            for aid, mids in par_asset.items():
+                if len(mids) > 3:
+                    err(f"ad set {cible_adset!r} : asset_id={aid!r} porte {len(mids)} "
+                        f"message_id distincts ({', '.join(sorted(mids))}), plafond 3 "
+                        "messages distincts par asset dans un ad set.")
+            par_message = {}
+            for nom, mid, aid in items:
+                if mid:
+                    par_message.setdefault(mid, []).append(nom)
+            for mid, noms in par_message.items():
+                statuts = msg_statuts.get(mid, set())
+                if "prouve" in statuts and "nouveau" in statuts:
+                    err(f"message_id={mid!r} : marqué à la fois 'nouveau' et 'prouve'. "
+                        "Un message n'a qu'un statut [rev. 2026-11].")
+                    continue
+                if "prouve" in statuts:
+                    if len(noms) > 6:
+                        err(f"ad set {cible_adset!r} : message_id={mid!r} (prouvé) porte "
+                            f"{len(noms)} ads ({', '.join(noms)}), plafond 6 itérations "
+                            "par message prouvé [rev. 2026-11].")
+                elif len(noms) > 2:
+                    err(f"ad set {cible_adset!r} : message_id={mid!r} porte {len(noms)} ads "
+                        f"({', '.join(noms)}), plafond 2 ads par message nouveau. Un message "
+                        "PROUVÉ a droit à 3 à 6 itérations : marquer message_statut='prouve' "
+                        "[rev. 2026-11].")
+
+    # ============================================================
+    # RÈGLES [rev. 2026-11] : cible, pack, minimums, événement, avatars, exclusions.
+    # ============================================================
+    cible = m.get("cible_cpic")
+    if cible is None:
+        err("'cible_cpic' absent : champ OBLIGATOIRE de tout manifeste (coût cible par IC). "
+            "Sans lui, evening_kill ne peut calculer ni le seuil de kill relatif "
+            "(2x / 3x la cible) ni fenetre_min [rev. 2026-11].")
+    elif isinstance(cible, bool) or not isinstance(cible, (int, float)) or cible <= 0:
+        err(f"'cible_cpic'={cible!r} : doit être un nombre positif (coût par IC) [rev. 2026-11].")
+
+    cs_b = m.get("campaign_spec") or {}
+    cbo_b = cs_b.get("budget_mode") == "CBO_DAILY_CAMPAIGN_LEVEL"
+
+    # Somme des minimums d'ad set <= 20 % du budget de la CBO.
+    if cbo_b and not meta.get("minimums_approved"):
+        budget_c = cs_b.get("daily_budget_cad")
+        mins = [a.get("daily_min_spend_target_cad") for a in ad_sets_all
+                if a.get("daily_min_spend_target_cad") is not None]
+        for mv in mins:
+            if isinstance(mv, bool) or not isinstance(mv, (int, float)) or mv < 0:
+                err(f"daily_min_spend_target_cad={mv!r} : nombre >= 0 attendu [rev. 2026-11].")
+        nums = [mv for mv in mins if isinstance(mv, (int, float)) and not isinstance(mv, bool)]
+        if nums and isinstance(budget_c, (int, float)) and budget_c > 0 \
+                and sum(nums) > 0.20 * budget_c:
+            err(f"somme des minimums d'ad set = {sum(nums):g} $ > 20 % du budget CBO "
+                f"({0.20 * budget_c:g} $ sur {budget_c} $/jour). Un minimum trop lourd "
+                "prive les gagnants de leur dépense [rev. 2026-11]. "
+                "Override conscient: _meta.minimums_approved=true")
+
+    # Un pack neuf = 4 à 8 ads.
+    pack_type = m.get("pack_type", "neuf")
+    if pack_type not in ("neuf", "iteration", "prouve"):
+        err(f"pack_type={pack_type!r} : 'neuf', 'iteration' ou 'prouve' attendu [rev. 2026-11].")
+    n_ads_pack = len(statics) + len(videos)
+    if pack_type == "neuf" and n_ads_pack and not meta.get("pack_size_approved") \
+            and not (4 <= n_ads_pack <= 8):
+        err(f"pack neuf de {n_ads_pack} ad(s) : 4 à 8 attendu [rev. 2026-11]. "
+            "Pour un ajout à un pack existant, poser pack_type='iteration' ou 'prouve'. "
+            "Override conscient: _meta.pack_size_approved=true")
+
+    # Un seul événement d'optimisation par campagne CBO.
+    def _evenement(a):
+        po = a.get("promoted_object") or m.get("promoted_object") or {}
+        if not isinstance(po, dict):
+            po = {}
+        return (po.get("custom_conversion_id") and f"CC:{po['custom_conversion_id']}") \
+            or po.get("custom_event_type") \
+            or a.get("optimization_goal") or m.get("optimization_goal")
+    if cbo_b:
+        evts = {}
+        for a in ad_sets_all:
+            ev = _evenement(a)
+            if ev:
+                evts.setdefault(str(ev), []).append(a.get("name", "sans nom"))
+        if len(evts) > 1:
+            err("plus d'un événement d'optimisation dans une campagne CBO ("
+                + "; ".join(f"{k}: {', '.join(v)}" for k, v in sorted(evts.items()))
+                + ") : un seul par CBO [rev. 2026-11].")
+
+    # 1 ou 2 avatars neufs simultanés.
+    avatars_neufs = {a.get("avatar") for a in ad_sets_all
+                     if a.get("avatar") and a.get("avatar_statut") == "neuf"}
+    if len(avatars_neufs) > 2:
+        warn(f"{len(avatars_neufs)} ad sets d'avatars NEUFS ({', '.join(sorted(map(str, avatars_neufs)))}) : "
+             "1 ou 2 avatars simultanés, partout ; creuser le gagnant avant d'en ouvrir "
+             "un autre [rev. 2026-11].")
+
+    # En prospection, n'exclure que les inscrits et les acheteurs. La règle dure
+    # 'exclusion des inscrits dans chaque ad set' reste une ERREUR si absente.
+    roles = m.get("exclusions_roles")
+    if not isinstance(roles, dict):
+        roles = {}
+    if not meta.get("engagement_exclusion_approved"):
+        non_classees = set()
+        for i, a in enumerate(ad_sets_all):
+            if str(a.get("tier", "")).lower() in ("retargeting", "remarketing"):
+                continue
+            exc = (a.get("targeting") or {}).get("excluded_custom_audiences") or []
+            for aud in exc if isinstance(exc, list) else []:
+                role = roles.get(str(aud))
+                if role is None:
+                    non_classees.add(str(aud))
+                elif role not in EXCLUSION_ROLES_ALLOWED:
+                    err(f"ad_sets[{i}] ({a.get('name', 'sans nom')}) : exclusion {aud} "
+                        f"de rôle {role!r} en prospection. Seuls les rôles "
+                        f"{', '.join(EXCLUSION_ROLES_ALLOWED)} s'excluent ; aucune exclusion "
+                        "d'engagement large [rev. 2026-11]. Override conscient: "
+                        "_meta.engagement_exclusion_approved=true")
+        if non_classees:
+            warn(f"{len(non_classees)} audience(s) exclue(s) en prospection sans rôle "
+                 "déclaré dans 'exclusions_roles' : la règle n'est pas vérifiable [rev. 2026-11].")
+
+    # Optimiser sur l'événement le plus profond (achat, lead qualifié) quand il existe.
+    dispo = m.get("conversions_disponibles")
+    if isinstance(dispo, dict) and (dispo.get("achat") or dispo.get("lead_qualifie")):
+        BRUTS = ("INITIATED_CHECKOUT", "LEAD", "LEAD_GENERATION", "COMPLETE_REGISTRATION")
+        for i, a in enumerate(ad_sets_all):
+            ev = str(_evenement(a) or "").upper()
+            if ev in BRUTS:
+                warn(f"ad_sets[{i}] ({a.get('name', 'sans nom')}) optimise sur {ev} alors "
+                     "que le manifeste déclare une conversion "
+                     + ("achat" if dispo.get("achat") else "lead qualifié")
+                     + " disponible : événement le plus profond à >= 10 conv/semaine. "
+                     "NOUVEL AD SET REQUIS (changer le promoted_object d'un ad set "
+                     "existant est impossible, subcode 3260011) [rev. 2026-11].")
 
     check_qs_mesure(dest_url, "destination.link_url")
 
