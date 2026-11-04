@@ -126,7 +126,7 @@ Le texte (body) doit toujours être synchronisé avec le messaging du visuel ET 
 
 - **Jamais plus d'un palier par jour.** Le front-load et le drop du calendrier restent prioritaires sur la grille les jours où ils s'appliquent.
 
-- **Méthode du delta** : l'écart entre le résultat réel et le résultat à la cible se dépense sans risque ; il sert à choisir où se placer dans la fourchette de la case. Exemple [calcul] : CBO à 1 000 $/jour, 10 IC par jour, cible 150 $ : 10 IC valent 1 500 $ à la cible, donc +500 $ (+50 %), coût réel 100 $ = 0,67 × cible.
+- **Méthode du delta** : l'écart entre le résultat réel et le résultat à la cible se dépense sans risque ; il sert à choisir où se placer dans la fourchette de la case. Exemple [calcul] : CBO à 1 000 $/jour, 10 IC par jour, cible 150 $ : 10 IC valent 1 500 $ à la cible, donc +500 $ (+50 %) ; mais le coût réel de 100 $ = 0,67 × cible tombe dans la case +20 à +40 %, la hausse est donc plafonnée par la case (+40 %, soit +400 $). Le delta sert à se placer dans la fourchette, jamais à en sortir.
 - Chaque rapport `meta-analyse` du matin donne le coût réel par IC, la case de la grille et le delta.
 - `budget_drop.py --surf` lit cette grille et exige `--campaign <id>` ; sans `--go`, rien n'est écrit. Le `--go` se lance sur approbation explicite du propriétaire du compte.
 
@@ -173,7 +173,7 @@ Le texte (body) doit toujours être synchronisé avec le messaging du visuel ET 
 ## Ordre d'intervention en fin de campagne (checklist)
 
 1. Passer en harvest : kill les brûleuses au seuil de kill relatif (2x `cible_cpic` à 0 IC, 3x à plus de 50 % d'écart), après `fenetre_min`, campagne jugée d'abord ; laisser CBO redistribuer.
-2. Enregistrer chaque kill dans `killed_ads.json` avec l'IC au moment du kill.
+2. Enregistrer chaque kill dans `killed_ads.json` avec l'IC au moment du kill, `cible_cpic`, le multiple de dépense et le coût par IC.
 3. Re-check périodique : réactiver les ads dont l'IC différé a rattrapé le seuil.
 4. Pivot messaging de fermeture sur les gagnantes (nouvelle créative), offre ou date en surimpression sur chaque visuel.
 5. Wind-down promo le jour de l'expiration (textes + metadata + ad dédiée).

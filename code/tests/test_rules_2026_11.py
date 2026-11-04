@@ -98,5 +98,13 @@ class TestSurfEtFenetreObjet(unittest.TestCase):
         self.assertIn("degrees_of_freedom_spec", m._dof_optout(True))
 
 
+    def test_date_naive_et_created_time_aware_sans_typeerror(self):
+        aware = datetime.datetime.fromisoformat("2026-11-04T21:30:00-05:00")
+        now = datetime.datetime.fromisoformat("2026-11-05T21:30:00-05:00")
+        self.assertFalse(m.fenetre_ecoulee("2026-11-04T21:30:00", 50, 400, now=now))   # naïve, 1 j
+        self.assertTrue(m.fenetre_ecoulee("2026-11-01", 50, 400, now=now))
+        self.assertFalse(m.fenetre_ecoulee(aware, 50, 400, now=datetime.datetime(2026, 11, 5, 21, 30)))
+
+
 if __name__ == "__main__":
     unittest.main()

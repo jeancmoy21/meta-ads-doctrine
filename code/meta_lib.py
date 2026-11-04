@@ -568,11 +568,23 @@ def fenetre_min(date_lancement, cible_cpic, budget_jour):
         return 3.0
     return max(3.0, 10.0 * float(cible_cpic) / float(budget_jour))
 
+# Fuseau par défaut d'une date sans offset (variable d'environnement META_TZ, ex.
+# "America/Toronto" ; défaut UTC).
+DEFAULT_TZ = os.environ.get("META_TZ", "UTC")
+
+def en_aware(dt, tz=None):
+    """[rev. 2026-11] datetime ou ISO -> datetime AWARE ; une date sans offset reçoit le
+    fuseau `tz` (défaut : META_TZ, sinon UTC). Évite le TypeError naïf/aware."""
+    import zoneinfo
+    if isinstance(dt, str):
+        dt = datetime.datetime.fromisoformat(dt)
+    return dt if dt.tzinfo else dt.replace(tzinfo=zoneinfo.ZoneInfo(tz or DEFAULT_TZ))
+
 def fenetre_ecoulee(date_lancement, cible_cpic, budget_jour, now=None):
-    """True si fenetre_min est passee depuis date_lancement (datetime ou ISO)."""
-    if isinstance(date_lancement, str):
-        date_lancement = datetime.datetime.fromisoformat(date_lancement)
-    now = now or datetime.datetime.now(date_lancement.tzinfo)
+    """True si fenetre_min est passée depuis date_lancement (datetime ou ISO).
+    Compare toujours en aware (voir en_aware)."""
+    date_lancement = en_aware(date_lancement)
+    now = en_aware(now) if now else datetime.datetime.now(date_lancement.tzinfo)
     jours = (now - date_lancement).total_seconds() / 86400.0
     return jours >= fenetre_min(date_lancement, cible_cpic, budget_jour)
 
@@ -688,7 +700,8 @@ def refuse_visual_enhancements(dof):
 
 def _dof_optout(opt_out_visuel):
     """[rev. 2026-11] Params à fusionner dans un POST adcreatives : opt-out des
-    enhancements VISUELS si opt_out_visuel=True ; {} sinon (défaut)."""
+    enhancements VISUELS (désactivé par défaut : opt_out_visuel=False, True disponible).
+    Noms de features [NON VÉRIFIÉ live]."""
     if not opt_out_visuel:
         return {}
     return {"degrees_of_freedom_spec": json.dumps(refuse_visual_enhancements({

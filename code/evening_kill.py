@@ -81,8 +81,8 @@ if not CIBLE_CPIC or not DATE_LANCEMENT:
     sys.exit("ERREUR: cible_cpic et date_lancement obligatoires (--cible-cpic/--date-lancement "
              "ou META_KILL_CIBLE_CPIC/META_KILL_DATE_LANCEMENT). Aucun kill sans cible [rev. 2026-11].")
 CIBLE_CPIC = float(CIBLE_CPIC)
-DATE_LANCEMENT = datetime.datetime.fromisoformat(DATE_LANCEMENT)
-NOW = datetime.datetime.fromisoformat(FX["now"]) if FIXTURE and FX.get("now") else datetime.datetime.now(DATE_LANCEMENT.tzinfo)
+DATE_LANCEMENT = m.en_aware(DATE_LANCEMENT)   # sans offset = fuseau META_TZ (défaut UTC)
+NOW = m.en_aware(FX["now"]) if FIXTURE and FX.get("now") else datetime.datetime.now(DATE_LANCEMENT.tzinfo)
 
 log("=== evening re-check start ===")
 
@@ -166,7 +166,7 @@ candidates = []
 # l'ad set pour un ad set, date_lancement pour la campagne. Un pack neuf dans une campagne
 # qui roule a sa propre fenêtre.
 def _t(x):
-    return datetime.datetime.fromisoformat(x) if x else None
+    return m.en_aware(x) if x else None
 ad_created = {d["name"]: _t(d.get("created_time")) for d in ra.get("data", [])}
 adset_created = {}
 for d in ra.get("data", []):
