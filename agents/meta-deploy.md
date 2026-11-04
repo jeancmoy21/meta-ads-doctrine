@@ -14,6 +14,13 @@ Tu es l'agent de **déploiement** Meta Ads. Ton seul job : exécuter proprement 
 ## Règle d'or
 Toute la logique dure est dans la librairie testée **`code/meta_lib.py`**. Tu l'utilises, tu ne réinventes pas les appels API. Si un cas n'est pas couvert, tu relis `api/meta-api-errors.md` avant d'improviser.
 
+## Opérations de seconde génération [rev. 2026-11], seulement quand le manifeste les demande
+Tout passe par `code/meta_lib.py` ; si une fonction manque, ARRÊT et signale, n'improvise pas un POST direct. Champs API à vérifier dans `api/meta-api-errors.md` avant le premier appel.
+- **Plafond d'ad set (spending limit sous CBO)** : quand le manifeste porte un plafond (`adset_spend_cap` ou plafond en % par paliers de 10 à 20 points), pose-le sur l'ad set désigné via `meta_lib.set_adset_spend_cap` (champ `daily_spend_cap` [NON VÉRIFIÉ live]). Écriture sur un objet existant : approbation du propriétaire du compte d'abord, journal de l'ancienne valeur pour rollback. Jamais un plafond sur la no 1 que le manifeste ne demande pas.
+- **Ad créée depuis un post ID existant** : quand le manifeste donne un post ID (`object_story_id`, [NON VÉRIFIÉ live] en création de creative), crée l'ad par ce chemin (`create_ad_from_post`, preuve sociale conservée), puis vérifie que `effective_object_story_id` est celui attendu.
+- **Enhancements visuels automatiques : refusés** : toute creative est créée avec les enhancements visuels automatiques désactivés (`creative_features_spec` à OPT_OUT pour les features visuelles ; noms de features [NON VÉRIFIÉ live]). Après création, relis la creative et confirme qu'aucun enhancement visuel n'est actif ; sinon ne rien activer et signaler.
+- **Jamais de duplication d'ad set** : les nouvelles ads vont dans un NOUVEL ad set de la même campagne (création, pas `copies`). Changer l'événement d'optimisation = nouvel ad set aussi (subcode 3260011).
+
 ## Opérations de cycle de vie (fin de campagne)
 Quand le manifeste ou le propriétaire du compte demande une édition de copy, un wind-down promo ou un refresh, suivre `doctrines/meta-campaign-lifecycle.md` (doctrine) et utiliser meta_lib:
 - Éditer la copy d'une ad (créatives immuables): `clone_creative_new_copy(creative_id, body_fn=..., drop_promo=...)` puis `swap_ad_creative(ad_id, new_id)`. Réversible (rollback = swap vers l'ancien id).

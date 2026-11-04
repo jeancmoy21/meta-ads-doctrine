@@ -24,6 +24,17 @@ Avant de composer un batch : **lis `doctrines/andromeda-strategy.md`** (doctrine
    - Ne JAMAIS recycler un body de la liste des bodies brûlés du rapport meta-analyse.
    - Pour **statics**: un POOL de bodies (5-6) + 5 titres + 5 descriptions (Meta optimise en DEGREES_OF_FREEDOM).
    - Pour **vidéos en customization placement**: 1 SEUL body + 1 titre + 1 desc par ad (contrainte API). Répartir des angles différents sur les concepts (1 body fort par vidéo).
+2b. **Règles de pack [rev. 2026-11]** (détail dans `doctrines/andromeda-strategy.md` et `doctrines/meta-campaign-lifecycle.md`, cités sans être recopiés) :
+   - **Type de pack** : déclare `nouveau` ou `prouvé` dans le manifeste (`pack_type` : `neuf`, `iteration` ou `prouve`). Pack neuf : 4 à 8 ads. Message `prouvé` : 3 à 6 itérations dans un pack séparé. Message `nouveau` : 2 ads max. Un seul événement d'optimisation par CBO.
+   - **`cible_cpic` obligatoire** : le manifeste porte `cible_cpic` (coût cible par IC de la campagne). S'il manque, demande-le au propriétaire du compte, ne l'invente pas. `fenetre_min` et le seuil de kill relatif en découlent (lus par `meta-analyse` et `evening_kill.py`).
+   - **Avatars** : 1 ou 2 avatars simultanés par batch, partout, peu importe le budget. Lancement échelonné ; le gagnant est creusé (nouveaux problèmes du même avatar) avant d'en ajouter un autre. Refuse un batch à 3 avatars ou plus.
+   - **Événement d'optimisation** : achat pour les payants, lead qualifié pour les gratuits, dès que la conversion propre existe. Sinon IC ou lead brut, et le manifeste le déclare en clair. Changer l'événement d'un ad set publié est impossible (subcode 3260011) : le manifeste prévoit un NOUVEL ad set. La métrique de lecture reste le coût par IC croisé avec le CRM, distincte de l'événement d'optimisation.
+   - **Jamais de duplication d'ad set** : les nouvelles ads vont dans un nouvel ad set de la même campagne.
+   - **Format par défaut** : le funnel se définit par la conversion (achat = bas de funnel, lead = haut). Statics par défaut pour une offre d'achat, vidéo par défaut pour le lead gen. Le format reste `[hors-doctrine / secondaire]` : jamais bloquant. Aucune ventilation par placement.
+   - **Retargeting fondu** : par défaut, le retargeting est fondu dans la prospection. Exclusions limitées aux inscrits à l'événement (règle dure, chaque ad set) et aux acheteurs ; aucune exclusion d'engagement large. Un ad set de remarketing séparé n'est PAS le défaut : seulement si la part engaged déborde (alerte vers 50 %) ou pour contrôler la dépense en fermeture, et le manifeste le justifie en une ligne.
+   - **Fermeture** : pour un batch de fermeture, l'offre ou la date en surimpression sur chaque visuel ; vérifie-le à l'inventaire. La lettre longue signée reste le défaut du primary text.
+   - **Pack de test géo + langue** : dérogation ponctuelle seulement, côte à côte, sur demande du propriétaire du compte. Le défaut reste « géo resserrée sans restriction de langue ».
+   - **Douleur** : transmets à la rédaction de copy « gain par défaut, au plus un angle douleur par batch, douleur évidente et statistique anxiogène interdites ».
 3. **Stratégie placement (vidéos)**: par défaut customization vert(9:16)→Reels/Stories + carré(1:1)→Feed. Si un seul format dispo, le signaler et le justifier dans `creative_build_note`.
 4. **UTM**: décliner `utm_content` par créatif, garder campaign/source/medium identiques.
 5. **Manifeste**: écris un JSON `manifests/<batch>.json` conforme au **schéma canonique `api/SCHEMA.md`** (lis-le AVANT d'écrire; il contient les deux modes batch/complet, les champs requis et un exemple complet). N'invente aucun champ hors schéma.
@@ -35,7 +46,7 @@ Avant de composer un batch : **lis `doctrines/andromeda-strategy.md`** (doctrine
 Toute campagne leadgen DEVRAIT avoir son tracking validé AVANT que le manifeste soit final. Ne jamais optimiser sur un PageView de page merci (compteur d'événements gonflé par les re-visites) ni sur un event natif d'une intégration tierce non vérifiée. Le pattern qui fonctionne :
 1. Sur la page de confirmation (jamais la landing elle-même), un script qui écoute la confirmation réelle de soumission et fire un événement custom (ex. `fbq('trackCustom', 'LeadFormSubmit')`), avec un guard (sessionStorage) pour éviter les doubles comptages.
 2. Créer une conversion personnalisée Meta scopée à cet événement + un identifiant de campagne dans l'URL.
-3. Les ad sets optimisent sur CETTE conversion DÈS LA CRÉATION (souvent irréversible après publication : changer l'objectif d'optimisation d'un ad set déjà publié échoue).
+3. Les ad sets optimisent sur CETTE conversion DÈS LA CRÉATION (irréversible après publication, subcode 3260011 : changer l'événement d'un ad set publié est impossible). Quand le lead qualifié ou l'achat propre existe, c'est lui l'événement d'optimisation et le lead brut redevient une métrique de lecture [rev. 2026-11].
 4. Valider empiriquement : soumission test réelle → confirmer l'événement reçu dans Events Manager AVANT d'activer.
 Le manifeste devrait inclure un bloc `tracking` documentant : l'identifiant de campagne dans l'URL, le nom de la conversion personnalisée à créer, et le rappel que le script de la page de confirmation est un prérequis de déploiement.
 
