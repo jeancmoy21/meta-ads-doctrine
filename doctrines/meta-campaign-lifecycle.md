@@ -32,24 +32,24 @@ Deux paliers sur la dépense cumulée de l'ad (ou de l'ad set) depuis son lancem
 1. dépense ≥ 2 × `cible_cpic` et 0 IC : kill.
 2. dépense ≥ 3 × `cible_cpic` et coût réel par IC > 1,5 × `cible_cpic` (c'est-à-dire plus de 50 % au-dessus de la cible) : kill.
 
-Sous 2 × `cible_cpic` dépensés, jamais de kill. Dans les deux cas, la campagne est jugée d'abord : si la campagne entière tient sa cible, une ad à plus de 30 % de la dépense n'est pas tuée mais plafonnée (`andromeda-strategy.md`, SOP plafonnement). Ordre de jugement : la campagne avant l'ad set, l'ad set avant l'ad. Un kill à montant fixe (ex. 150 $) est à proscrire : à 150 $ dépensés, une ad parfaitement à une cible de 250 $ est à 0 IC 55 % du temps [calcul, loi de Poisson].
+Sous 2 × `cible_cpic` dépensés, jamais de kill. **La campagne tient sa cible** quand son coût réel par IC est ≤ 1,10 × `cible_cpic` (constante `TOLERANCE_CIBLE` de `meta_lib.py`, paramètre ajustable). Dans les deux cas, la campagne est jugée d'abord : si la campagne entière tient sa cible, une ad à plus de 30 % de la dépense n'est pas tuée mais plafonnée (`andromeda-strategy.md`, SOP plafonnement). Ordre de jugement : la campagne avant l'ad set, l'ad set avant l'ad. Un kill à montant fixe (ex. 150 $) est à proscrire : à 150 $ dépensés, une ad parfaitement à une cible de 250 $ est à 0 IC 55 % du temps [calcul, loi de Poisson].
 
 ### Fenêtre minimale [rev. 2026-11]
 
-Aucun kill avant `fenetre_min` = le plus grand de 3 jours ou du temps nécessaire pour 10 IC au coût cible. Exemples [calcul] : 1 000 $/jour à 100 $ de cible = 3 jours ; 167 $/jour (5 k$/mois) à 150 $ = 9 jours. Jamais de jugement sur un jour, un matin ou un lendemain d'événement. Les lectures quotidiennes de l'étage amont restent permises, sans action. Fenêtres empilées pour lire une tendance : 14 jours, 7, 3, puis la veille, jamais la veille seule.
+Aucun kill avant `fenetre_min` = le plus grand de 3 jours ou du temps nécessaire pour 10 IC au coût cible. **`fenetre_min` s'ancre sur l'objet jugé** : `created_time` de l'ad set pour un ad set, `created_time` de l'ad pour une ad, date de lancement pour la campagne. Un pack neuf dans une campagne qui roule a donc sa propre fenêtre [rev. 2026-11]. Exemples [calcul] : 1 000 $/jour à 100 $ de cible = 3 jours ; 167 $/jour (5 k$/mois) à 150 $ = 9 jours. Jamais de jugement sur un jour, un matin ou un lendemain d'événement. Les lectures quotidiennes de l'étage amont restent permises, sans action. Fenêtres empilées pour lire une tendance : 14 jours, 7, 3, puis la veille, jamais la veille seule.
 
 ### Kill switches en cascade [rev. 2026-11]
 
 - Étages : vue de la landing page, lead brut ou IC, achat. Les seuils par étage se tirent des ratios réels du compte, avec la même fenêtre d'attribution pour fixer le seuil et pour juger.
 - **Jamais de kill sur CPM, CPC, CTR ou ViewContent** : Meta n'optimise pas l'ad individuelle isolément. Le KPI se juge à la campagne avant l'ad.
-- **Dud** : ad set collé à son minimum de dépense avec un coût par IC à 2x `cible_cpic` sur 7 jours, ou ad qui franchit le seuil de kill relatif sans être la dominante d'une campagne à la cible. Seuls les duds se coupent quand la campagne tient sa cible.
+- **Dud** : une ad (ou un ad set) qui franchit le seuil de kill relatif sans être l'objet dominant de son niveau. La dépense collée au minimum n'est pas le critère, c'est un indice de lecture (§8). Seuls les duds se coupent quand la campagne tient sa cible.
 - **« High CTR + 0 conversion »** = bonne accroche, mauvaise poche ou mauvais relais. En croissance, on répare (body, offre, CTA) avant de jeter ; en harvest, kill au seuil relatif.
 
 ### Backtrack
 
 Le pixel Meta retarde les conversions. Un kill peut donc être prématuré si des conversions différées rentrent après coup.
 
-- À chaque kill, **enregistrer l'ad dans un registre** (`killed_ads.json`) avec le nombre de paiements initiés au moment du kill et la `cible_cpic` de la campagne.
+- À chaque kill, **enregistrer l'ad dans un registre** (`killed_ads.json`) avec le nombre de paiements initiés au moment du kill, la `cible_cpic` de la campagne, le multiple de dépense atteint et le coût réel par IC au moment du verdict.
 - À chaque re-check, si des conversions différées rentrent (`IC_actuel - IC_au_kill >= seuil`, ex. 2), **RÉACTIVER l'ad**.
 - **Métrique de LECTURE = paiement initié** (`offsite_conversion.fb_pixel_initiate_checkout`) croisé avec le CRM, PAS l'achat pixel (`offsite_conversion.fb_pixel_purchase`) qui lag davantage. Elle est distincte de l'événement d'OPTIMISATION de l'ad set (`meta-tracking-doctrine.md`, vérités dures 0 à 2) [rev. 2026-11].
 
@@ -57,7 +57,7 @@ Le pixel Meta retarde les conversions. Un kill peut donc être prématuré si de
 - `record_kill(registry_path, ad_name, ad_id, ic_at_kill, by)` : pause l'ad (PAUSED) et l'inscrit au registre. Idempotent, crée le fichier si absent.
 - `check_backtrack(registry_path, campaign_id, gained_threshold)` : pull l'IC actuel par ad, réactive (ACTIVE) toute ad dont `IC_actuel - ic_at_kill >= gained_threshold`, la retire du registre, retourne les réactivées.
 - Registre par défaut : `killed_ads.json` (constante `meta_lib.KILL_REGISTRY`, à pointer vers votre propre chemin de données).
-- **Format du registre (figé)** : `{ ad_name: {"ad_id", "ic_at_kill", "killed_at", "by"} }`. Compat ascendante : les vieilles entrées sans `ad_id` sont re-résolues par nom via `{campaign}/ads`.
+- **Format du registre (figé)** : `{ ad_name: {"ad_id", "ic_at_kill", "killed_at", "by"} }`, plus, pour les kills de `evening_kill.py`, `cible_cpic`, `multiple_depense` et `cout_par_ic`. Compat ascendante : les vieilles entrées sans `ad_id` sont re-résolues par nom via `{campaign}/ads`.
 - `evening_kill.py` reste le job du soir (logs + snapshots). Il applique le seuil de kill relatif (`2 * cible_cpic`, puis `3 * cible_cpic` à plus de 50 % d'écart), n'agit qu'après `fenetre_min`, juge la campagne d'abord et ne tue jamais la no 1 d'une campagne à la cible [rev. 2026-11]. Le seuil fixe en dollars de l'ancienne version est retiré.
 
 ---
@@ -114,18 +114,21 @@ Le texte (body) doit toujours être synchronisé avec le messaging du visuel ET 
 - Mécanisme suggéré : job planifié local (ex. `launchd` sur Mac, `cron` sur Linux) déclenché le matin voulu.
 - **Limite headless** : un job autonome peut AGIR en pur script (via `meta_lib`) mais ne peut généralement pas notifier facilement en headless si votre notification dépend d'un client connecté. Doctrine : **agir en autonome, rapporter en session**.
 
-**Grille surf, lecture du matin [rev. 2026-11].** La taille de la hausse suit l'écart entre le coût réel par IC (croisé avec le CRM) et `cible_cpic` :
+**Grille surf, lecture du matin [rev. 2026-11].** Grille unique, lue une fois par matin sur le coût réel par IC de la campagne (croisé avec le CRM) contre `cible_cpic`, après `fenetre_min` de la campagne :
 
-| Coût réel par rapport à la cible | Hausse de budget |
+| Coût réel par IC | Delta de budget du jour |
 |:---|:---|
-| À la cible | +10 à 20 % |
-| 30 à 50 % sous la cible | +20 à 40 % |
-| 50 à 100 % sous la cible | +50 à 100 % |
-| 2 à 3 fois mieux que la cible | doubler |
+| > 1,30 × cible | baisse de 10 à 20 % |
+| 1,10 à 1,30 × cible | tenir |
+| 0,70 à 1,10 × cible | +10 à +20 % |
+| 0,50 à 0,70 × cible | +20 à +40 % |
+| < 0,50 × cible | +50 à +100 % |
 
-- **Méthode du delta** : l'écart entre le résultat réel et le résultat à la cible se dépense sans risque. Exemple [calcul] : CBO à 1 000 $/jour, 10 IC par jour, cible 150 $ : 10 IC valent 1 500 $ à la cible, donc +500 $ (+50 %).
-- Chaque rapport `meta-analyse` du matin donne le delta et la case de la grille. Hausse intrajournée permise, au plus une baisse par jour.
-- `budget_drop.py` a un mode « surf » qui PROPOSE la hausse ; l'exécution se fait sous approbation explicite du propriétaire du compte.
+- **Jamais plus d'un palier par jour.** Le front-load et le drop du calendrier restent prioritaires sur la grille les jours où ils s'appliquent.
+
+- **Méthode du delta** : l'écart entre le résultat réel et le résultat à la cible se dépense sans risque ; il sert à choisir où se placer dans la fourchette de la case. Exemple [calcul] : CBO à 1 000 $/jour, 10 IC par jour, cible 150 $ : 10 IC valent 1 500 $ à la cible, donc +500 $ (+50 %), coût réel 100 $ = 0,67 × cible.
+- Chaque rapport `meta-analyse` du matin donne le coût réel par IC, la case de la grille et le delta.
+- `budget_drop.py --surf` lit cette grille et exige `--campaign <id>` ; sans `--go`, rien n'est écrit. Le `--go` se lance sur approbation explicite du propriétaire du compte.
 
 ---
 
@@ -135,7 +138,7 @@ Le texte (body) doit toujours être synchronisé avec le messaging du visuel ET 
 - **Minimum sur chaque nouveau pack : 1x `cible_cpic`**, gardé 7 jours au maximum, puis retiré. **Somme des minimums ≤ 20 % du budget de la campagne** (règle qui règle une grande part des problèmes de dépense mal répartie).
 - **Pas de minimum sous environ 200 $/jour de CBO**, ni sur un pack d'intérêt, ni plusieurs packs sous minimum à la fois à petit budget.
 - **Maximums en %, minimums en $**. Le maximum en % est l'outil de la SOP plafonnement.
-- **Un gagnant dépense au-dessus de son minimum** ; un ad set collé à son minimum avec un coût par IC à 2x la cible après 7 jours est un dud.
+- **Un gagnant dépense au-dessus de son minimum** ; un ad set collé à son minimum avec un coût par IC à 2x la cible après 7 jours est un indice de dud à lire, pas un verdict : le verdict suit la définition du §2.
 - **Un minimum protège aussi** une ad très rentable qui dépense peu, ou un contenu à droits limités (témoignage à durée limitée) : minimum une semaine, puis hausse.
 - Un pack lancé sans hausser la CBO prend sa dépense aux anciens : prévoir la hausse au lancement.
 

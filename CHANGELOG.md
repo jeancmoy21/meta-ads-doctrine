@@ -22,7 +22,12 @@ Révision inspirée de la formation « The Facebook Ads Blueprint » de Sam Pili
 - Douleur = outil ponctuel (un angle par batch au plus), gain par défaut.
 - Fréquence par fenêtre et par segment : prospection 2,2 à 2,5 sur 7 jours ; retargeting 10 sur 7 jours et 15 sur 30 jours.
 - Retargeting fondu dans la prospection par défaut ; en prospection, on n'exclut que les inscrits et les acheteurs.
-- Grille surf et méthode du delta pour la lecture du matin ; `budget_drop.py` gagne un mode « surf » sans écriture par défaut.
+- Grille surf unique en 5 cases (coût réel par IC contre `cible_cpic`, un palier par jour, baisse au-dessus de 1,30) ; `budget_drop.py --surf --campaign <id>` n'écrit rien sans `--go`.
+- Tolérance « la campagne tient sa cible » = 1,10 x `cible_cpic`.
+- `fenetre_min` ancrée sur l'objet jugé (`created_time` de l'ad set ou de l'ad) : un pack neuf a sa propre fenêtre.
+- Dud = franchit le seuil relatif sans être l'objet dominant de son niveau.
+- Registre de kill : `cible_cpic`, multiple de dépense et coût par IC au moment du verdict.
+- Création par post ID sous gate `go=True` ; `opt_out_visuel` disponible, défaut `False` tant que les noms de features ne sont pas vérifiés.
 - Lancement d'un pack : minimum 1x `cible_cpic` sur 7 jours, somme des minimums ≤ 20 % du budget, maximums en %, minimums en $.
 - Coexistence evergreen et événement : campagne dédiée à l'événement, evergreen réduit de 50 à 90 %.
 - Diagnostic d'une chute : offre et page d'abord, ventilation avant contre après, un changement à la fois.
@@ -44,6 +49,6 @@ Révision inspirée de la formation « The Facebook Ads Blueprint » de Sam Pili
 
 - `meta_lib.py` : `fenetre_min`, `fenetre_ecoulee`, `seuil_kill_relatif`, `campagne_tient_cible`, `palier_plafond`, `evaluer_cascade`, `make_creative_from_post`, `create_ad_from_post`, `refuse_visual_enhancements`, `set_adset_spend_cap`.
 - `validate_manifest.py` : `cible_cpic` obligatoire, pack de 4 à 8 ads, somme des minimums, un seul événement d'optimisation par CBO, avatars, rôles d'exclusion, plafonds par message et par asset.
-- `evening_kill.py` : seuil relatif et cascade à la place du seuil fixe ; options `--dry-run`, `--fixture`.
+- `evening_kill.py` : seuil relatif et cascade à la place du seuil fixe, fenêtre par objet (`created_time`), registre enrichi ; options `--dry-run`, `--fixture <chemin>`.
 - `budget_drop.py` : mode `--surf`.
-- `code/tests/` : tests des règles de seuil, de fenêtre et de cascade.
+- `code/tests/` : 13 tests (seuils, fenêtre par objet, cascade, grille surf, gate post ID) et 3 fixtures.

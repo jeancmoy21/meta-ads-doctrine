@@ -200,7 +200,7 @@ def video_thumbnail(path, at_sec=2):
 
 # ---------- Creatives ----------
 def make_static_creative(name, image_hash, utm, bodies, titles, descriptions, cta=DEFAULT_CTA,
-                         link=None, caption=None):
+                         link=None, caption=None, opt_out_visuel=False):
     """Static flexible ad (Advantage+ texte). link_data porte image+lien+CTA,
     asset_feed_spec porte le pool de textes (DEGREES_OF_FREEDOM). Pas de video_data."""
     # Précédence link/caption: voir resolve_link (URL de manifeste = telle quelle).
@@ -215,7 +215,8 @@ def make_static_creative(name, image_hash, utm, bodies, titles, descriptions, ct
            "optimization_type": "DEGREES_OF_FREEDOM"}
     r, err = _post(f"{ACCOUNT}/adcreatives", {
         "name": name, "object_story_spec": json.dumps(oss),
-        "asset_feed_spec": json.dumps(afs), "access_token": token()})
+        "asset_feed_spec": json.dumps(afs), "access_token": token(),
+        **_dof_optout(opt_out_visuel)})
     if err: raise RuntimeError(f"static creative {name}: {err}")
     return r["id"]
 
@@ -229,7 +230,7 @@ VERT_PLACEMENTS = {
 
 def make_video_placement_creative(name, vert_id, sq_id, vert_thumb, sq_thumb,
                                   utm, body, title, description, cta=DEFAULT_CTA,
-                                  link=None, caption=None):
+                                  link=None, caption=None, opt_out_visuel=False):
     """Vidéo single avec customization par placement: 9:16 sur Reels/Stories, carré sur Feed.
     RECETTE CRITIQUE (confirmée en production):
     - PAS de video_data dans object_story_spec (sinon videos/rules droppés silencieusement).
@@ -262,13 +263,14 @@ def make_video_placement_creative(name, vert_id, sq_id, vert_thumb, sq_thumb,
     }
     r, err = _post(f"{ACCOUNT}/adcreatives", {
         "name": name, "object_story_spec": json.dumps(oss),
-        "asset_feed_spec": json.dumps(afs), "access_token": token()})
+        "asset_feed_spec": json.dumps(afs), "access_token": token(),
+        **_dof_optout(opt_out_visuel)})
     if err: raise RuntimeError(f"video creative {name}: {err}")
     return r["id"]
 
 
 def make_static_placement_creative(name, vert_hash, feed_hash, utm, body, title, description,
-                                   cta=DEFAULT_CTA, link=None, caption=None):
+                                   cta=DEFAULT_CTA, link=None, caption=None, opt_out_visuel=False):
     """Static multi-format avec customization par placement: image 9:16 (vert_hash) sur
     Reels/Stories, image 1:1 ou 4:5 (feed_hash) sur Feed et le reste.
     Même recette que la vidéo: PAS de link_data, call_to_actions[] porte le link,
@@ -298,7 +300,8 @@ def make_static_placement_creative(name, vert_hash, feed_hash, utm, body, title,
     }
     cr, err = _post(f"{ACCOUNT}/adcreatives", {
         "name": name, "object_story_spec": json.dumps(oss),
-        "asset_feed_spec": json.dumps(afs), "access_token": token()})
+        "asset_feed_spec": json.dumps(afs), "access_token": token(),
+        **_dof_optout(opt_out_visuel)})
     if err:
         raise RuntimeError(f"static placement creative {name}: {err}")
     return cr["id"]
@@ -425,7 +428,7 @@ def swap_ad_creative(ad_id, new_creative_id):
 
 
 def make_static_simple(name, image_hash, utm, body, title, description, cta=DEFAULT_CTA,
-                       link=None, caption=None):
+                       link=None, caption=None, opt_out_visuel=False):
     """Static single-image SANS asset_feed_spec (fallback non-DOF).
     make_static_creative (DEGREES_OF_FREEDOM) plante avec 1 seul asset par champ
     (subcode 2446218 Not enough creative assets: DOF exige >1 asset sur au moins
@@ -439,7 +442,8 @@ def make_static_simple(name, image_hash, utm, body, title, description, cta=DEFA
         "message": body, "name": title, "description": description,
         "call_to_action": {"type": cta}}}
     r, err = _post(f"{ACCOUNT}/adcreatives", {
-        "name": name, "object_story_spec": json.dumps(oss), "access_token": token()})
+        "name": name, "object_story_spec": json.dumps(oss), "access_token": token(),
+        **_dof_optout(opt_out_visuel)})
     if err:
         raise RuntimeError(f"static simple {name}: {err}")
     return r["id"]
@@ -596,13 +600,15 @@ def palier_plafond(part_actuelle, palier=0.10):
     palier = min(max(palier, 0.10), 0.20)
     return max(round(part_actuelle - palier, 2), 0.05)
 
-def evaluer_cascade(cible_cpic, camp, adsets, ads, ad_adset, whitelist=()):
+def evaluer_cascade(cible_cpic, camp, adsets, ads, ad_adset, whitelist=(), fenetre_ok=None):
     """[rev. 2026-11] Campagne d'abord, puis ad set, puis ad. Entrées :
     camp {"sp","ic"}; adsets {nom:{"sp","ic"}}; ads {nom:{"sp","ic"}}; ad_adset {ad:adset}.
     Retourne une liste de décisions {niveau, nom, action, raison} ; action = KILL
     (ad), RECO_KILL (ad set : recommandation, jamais exécutée), PLAFOND (reco de
-    plafond, jamais un kill) ou TENIR. Si la campagne tient sa cible, tout ad ou ad
-    set a plus de 30 % de la depense (ou no 1 en depense) est plafonne, pas tue."""
+    plafond, jamais un kill) ou TENIR. Si la campagne tient sa cible, toute ad ou ad
+    set à plus de 30 % de la dépense (ou no 1 en dépense) est plafonné, pas tué.
+    fenetre_ok (optionnel) : {(niveau, nom): bool} ; False = fenetre_min de CET objet pas
+    écoulée (ancrée sur son created_time) donc aucun verdict de kill [rev. 2026-11]."""
     out = []
     tient = campagne_tient_cible(cible_cpic, camp)
     k, why = seuil_kill_relatif(cible_cpic, camp["sp"], camp["ic"])
@@ -612,6 +618,9 @@ def evaluer_cascade(cible_cpic, camp, adsets, ads, ad_adset, whitelist=()):
     tot = camp["sp"] or 1.0
 
     def juger(niveau, nom, d, rang1):
+        if fenetre_ok is not None and not fenetre_ok.get((niveau, nom), True):
+            return {"niveau": niveau, "nom": nom, "action": "TENIR",
+                    "raison": "fenetre_min de cet objet pas écoulée (AUCUN KILL)"}
         kill, raison = seuil_kill_relatif(cible_cpic, d["sp"], d["ic"])
         part = d["sp"] / tot
         if not kill:
@@ -619,7 +628,7 @@ def evaluer_cascade(cible_cpic, camp, adsets, ads, ad_adset, whitelist=()):
         if tient and (part > PART_DOMINANTE or rang1):
             return {"niveau": niveau, "nom": nom, "action": "PLAFOND",
                     "raison": f"campagne tient la cible, part {part:.0%} : plafonner à "
-                              f"{palier_plafond(part):.0%} de la depense, pas de kill ({raison})"}
+                              f"{palier_plafond(part):.0%} de la dépense, pas de kill ({raison})"}
         return {"niveau": niveau, "nom": nom,
                 "action": "RECO_KILL" if niveau == "adset" else "KILL", "raison": raison}
 
@@ -637,39 +646,55 @@ def evaluer_cascade(cible_cpic, camp, adsets, ads, ad_adset, whitelist=()):
         out.append(juger("ad", nom, d, nom == no1_ad))
     return out
 
-def make_creative_from_post(name, object_story_id, opt_out_visuel=False):
+def make_creative_from_post(name, object_story_id, opt_out_visuel=False, go=False):
     """[rev. 2026-11] Creative sur un post EXISTANT (object_story_id =
-    '<page_id>_<post_id>') : garde la preuve sociale. ECRITURE (POST adcreatives) : a
-    n'appeler que sur instruction. opt_out_visuel=True ajoute un opt-out explicite des
-    enhancements visuels [NON VERIFIE live] (defaut False : le post garde son contenu)."""
-    params = {"name": name, "object_story_id": object_story_id, "access_token": token()}
-    if opt_out_visuel:
-        params["degrees_of_freedom_spec"] = json.dumps(refuse_visual_enhancements({
-            "creative_features_spec": {k: {"enroll_status": "OPT_OUT"}
-                                       for k in VISUAL_ENHANCEMENT_FEATURES}}))
-    r, err = _post(f"{ACCOUNT}/adcreatives", params)   # [NON VERIFIE live] object_story_id
+    '<page_id>_<post_id>') : garde la preuve sociale. ÉCRITURE : sans go=True, retour
+    simulé et AUCUN POST. opt_out_visuel=True ajoute un opt-out explicite des
+    enhancements visuels [NON VÉRIFIÉ live] (défaut False : le post garde son contenu)."""
+    if not go:
+        return {"dry_run": True, "action": "adcreatives", "name": name,
+                "object_story_id": object_story_id}
+    params = {"name": name, "object_story_id": object_story_id, "access_token": token(),
+              **_dof_optout(opt_out_visuel)}
+    r, err = _post(f"{ACCOUNT}/adcreatives", params)   # [NON VÉRIFIÉ live] object_story_id
     if err: raise RuntimeError(f"creative from post {name}: {err}")
     return r["id"]
 
-def create_ad_from_post(name, adset_id, object_story_id, status="PAUSED", opt_out_visuel=False):
-    """[rev. 2026-11] Ad à partir d'un post ID existant. PAUSED par defaut."""
-    return create_ad(name, adset_id, make_creative_from_post(name, object_story_id, opt_out_visuel), status)
+def create_ad_from_post(name, adset_id, object_story_id, status="PAUSED", opt_out_visuel=False, go=False):
+    """[rev. 2026-11] Ad à partir d'un post ID existant. PAUSED par défaut.
+    Sans go=True : retour simulé, aucun POST."""
+    if not go:
+        return {"dry_run": True, "action": "ads", "name": name, "adset_id": adset_id,
+                "object_story_id": object_story_id, "status": status}
+    cid = make_creative_from_post(name, object_story_id, opt_out_visuel, go=True)
+    return create_ad(name, adset_id, cid, status)
 
-# [rev. 2026-11] Enhancements qui modifient l'image ou la video : refusés.
-# Noms de features [NON VERIFIE live] (Advantage+ creative, creative_features_spec).
-# Texte et CTA restent permis. 'standard_enhancements' (déprécié, subcode 3858504) est
-# déjà retiré par _clean_recreate_spec : on ne le touche pas.
+# [rev. 2026-11] Enhancements qui modifient l'image ou la vidéo. Noms de features
+# [NON VÉRIFIÉ live] (Advantage+ creative, creative_features_spec). Texte et CTA restent
+# permis. opt_out_visuel=True est disponible mais le défaut reste False tant qu'un tir de
+# test n'a pas vérifié ces noms ; d'ici là, vérifier dans Ads Manager après création.
+# 'standard_enhancements' (déprécié, subcode 3858504) est déjà retiré par _clean_recreate_spec.
 VISUAL_ENHANCEMENT_FEATURES = ("image_brightness_and_contrast", "image_templates",
                                "image_touchups", "image_uncrop", "video_auto_crop")
 
 def refuse_visual_enhancements(dof):
-    """Leve ValueError si un enhancement VISUEL est OPT_IN dans un
-    degrees_of_freedom_spec ; retourne dof tel quel sinon (verifie, ne modifie pas)."""
+    """Lève ValueError si un enhancement VISUEL est OPT_IN dans un
+    degrees_of_freedom_spec ; retourne dof tel quel sinon (vérifie, ne modifie pas)."""
     cfs = ((dof or {}).get("creative_features_spec")) or {}
     for k in VISUAL_ENHANCEMENT_FEATURES:
         if (cfs.get(k) or {}).get("enroll_status") == "OPT_IN":
-            raise ValueError(f"enhancement visuel refuse : {k} OPT_IN [rev. 2026-11]")
+            raise ValueError(f"enhancement visuel refusé : {k} OPT_IN [rev. 2026-11]")
     return dof
+
+def _dof_optout(opt_out_visuel):
+    """[rev. 2026-11] Params à fusionner dans un POST adcreatives : opt-out des
+    enhancements VISUELS si opt_out_visuel=True ; {} sinon (défaut)."""
+    if not opt_out_visuel:
+        return {}
+    return {"degrees_of_freedom_spec": json.dumps(refuse_visual_enhancements({
+        "creative_features_spec": {k: {"enroll_status": "OPT_OUT"}
+                                   for k in VISUAL_ENHANCEMENT_FEATURES}}))}
+
 
 def set_adset_spend_cap(adset_id, daily_spend_cap_cad=None, daily_min_spend_target_cad=None, go=False):
     """[rev. 2026-11] Spending limits d'ad set sous CBO. Champs

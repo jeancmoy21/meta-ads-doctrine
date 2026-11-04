@@ -14,7 +14,7 @@ Usage: evening_kill.py [options] <campaign_id> <baseline_label> [output_label]
 
 Options (retirées de argv avant les positionnels) [rev. 2026-11] :
   --dry-run                 aucune écriture (ni Graph API, ni registre, ni log disque)
-  --fixture <json>          aucun appel API (implique --dry-run) ; voir tests/fixture_evening_kill.json
+  --fixture <json>          aucun appel API (implique --dry-run), chemin obligatoire ; voir tests/fixture_evening_kill.json
   --cible-cpic N            coût cible par IC (prime sur l'environnement)
   --date-lancement ISO      date de lancement de la campagne (prime sur l'environnement)
   --budget-jour N           budget quotidien de la campagne en $ (sinon lu sur la campagne)
@@ -39,6 +39,8 @@ def _flag(name, has_value=True):
     i = sys.argv.index(name)
     if not has_value:
         sys.argv.pop(i); return True
+    if i + 1 >= len(sys.argv) or sys.argv[i + 1].startswith("--"):
+        sys.exit(f"ERREUR: {name} exige une valeur (ex. {name} chemin_ou_valeur)")
     v = sys.argv[i + 1]; del sys.argv[i:i + 2]; return v
 
 DRY = _flag("--dry-run", False)
@@ -113,7 +115,7 @@ now = {d["ad_name"]: {"sp": float(d.get("spend", 0)), "ic": ic(d.get("actions"))
 if FIXTURE:
     ra = {"data": FX["ads"]}
 else:
-    ra, _ = m._get(f"{CAMPAIGN}/ads", {"fields": "id,name,status,effective_status", "limit": 200})
+    ra, _ = m._get(f"{CAMPAIGN}/ads", {"fields": "id,name,status,effective_status,created_time,adset{name,created_time}", "limit": 200})
 ids = {d["name"]: d["id"] for d in ra.get("data", [])}
 live = {d["name"]: d["id"] for d in ra.get("data", [])
         if d.get("effective_status") == "ACTIVE"}
@@ -160,13 +162,33 @@ for n, v in now.items():
 camp_cum = {"sp": sum(v["sp"] for v in now.values()), "ic": sum(v["ic"] for v in now.values())}
 
 candidates = []
+# [rev. 2026-11] fenetre_min ancrée sur l'objet jugé : created_time de l'ad pour une ad, de
+# l'ad set pour un ad set, date_lancement pour la campagne. Un pack neuf dans une campagne
+# qui roule a sa propre fenêtre.
+def _t(x):
+    return datetime.datetime.fromisoformat(x) if x else None
+ad_created = {d["name"]: _t(d.get("created_time")) for d in ra.get("data", [])}
+adset_created = {}
+for d in ra.get("data", []):
+    aset = d.get("adset") or {}
+    if aset.get("name") and aset.get("created_time"):
+        adset_created[aset["name"]] = _t(aset["created_time"])
+if FIXTURE:
+    adset_created.update({k: _t(v) for k, v in FX.get("adsets_created", {}).items()})
+def _ok(created):
+    return created is None or (NOW - created).total_seconds() / 86400.0 >= fen
+fenetre_ok = {("ad", n): _ok(ad_created.get(n)) for n in now}
+fenetre_ok.update({("adset", n): _ok(adset_created.get(n)) for n in adsets_cum})
+for (niv, n), ok_ in fenetre_ok.items():
+    if not ok_:
+        log(f"  fenetre_min pas écoulée pour {niv} {n[:46]} (créé {(ad_created if niv == 'ad' else adset_created).get(n)})")
 if jours < fen:
     log(f"  AUCUN KILL : fenetre_min pas écoulée ({jours:.2f} j < {fen:.2f} j) [rev. 2026-11]")
     decisions = []
 else:
     decisions = m.evaluer_cascade(CIBLE_CPIC, camp_cum, adsets_cum,
                                   {n: v for n, v in now.items() if n in live},
-                                  adset_of, WHITELIST)
+                                  adset_of, WHITELIST, fenetre_ok)
 for d in decisions:
     log(f"  [{d['niveau']}] {d['nom'][:46]:46} {d['action']}: {d['raison']}")
     if d["niveau"] == "ad" and d["action"] == "KILL":
@@ -182,8 +204,12 @@ for name, adid, d_sp, fr in candidates:
     log(f"  KILL {name[:46]:46} (cumul {d_sp:.0f}$, seuil relatif) -> {ok}")
     if not e:
         killed.append(name)
-        reg[name] = {"ad_id": adid, "ic_at_kill": now.get(name, {}).get("ic", 0),
-                     "killed_at": datetime.datetime.now().isoformat(), "by": "evening-check"}
+        # le registre garde le verdict : cible, multiple de dépense, coût par IC.
+        _ic = now.get(name, {}).get("ic", 0)
+        reg[name] = {"ad_id": adid, "ic_at_kill": _ic,
+                     "killed_at": datetime.datetime.now().isoformat(), "by": "evening-check",
+                     "cible_cpic": CIBLE_CPIC, "multiple_depense": round(d_sp / CIBLE_CPIC, 2),
+                     "cout_par_ic": round(d_sp / _ic, 2) if _ic else None}
 if not DRY:
     json.dump(reg, open(REG, "w"), ensure_ascii=False, indent=1)
 

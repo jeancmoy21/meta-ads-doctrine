@@ -24,14 +24,15 @@ Pour classer gagnants/perdants : **paiement initié** (`offsite_conversion.fb_pi
 | MATURE | >= 75 $ OU >= 3 paiements initiés : verdict permis |
 | Gagnant | MATURE et coût par IC <= `cible_cpic` (champ du manifeste, ou config de votre compte) |
 | Perdant | MATURE, après `fenetre_min`, ET seuil de kill relatif atteint (voir « Kill » ci-dessous). Aucun montant fixe [rev. 2026-11] |
-| Dud | ad sous le minimum de dépense de son ad set après `fenetre_min` : à nommer, jamais à confondre avec un perdant [rev. 2026-11] |
+| Campagne « tient sa cible » | coût réel par IC de la campagne <= 1,10 x `cible_cpic` (`TOLERANCE_CIBLE` de `meta_lib.py`), pas strict [rev. 2026-11] |
+| Dud | ad ou ad set qui franchit le seuil relatif de kill sans être l'objet dominant de son niveau [rev. 2026-11] |
 | Saturation | fréquence sur 7 j hors de la fenêtre de la section « Fréquence » AVEC reach qui plafonne (< +10 % jour sur jour) [rev. 2026-11] |
 | Alerte CPM | CPM du jour > +20 % vs moyenne 7 j (lecture marché, pas un verdict créatif) |
 
 Si `cible_cpic` n'est ni dans le manifeste ni dans une config, demande-la au propriétaire du compte. Ne l'invente pas.
 
 ### Kill : cascade, fenêtre, seuil relatif [rev. 2026-11]
-- `fenetre_min` = le plus grand de 3 jours ou du temps nécessaire pour 10 IC au coût cible. AUCUN verdict de kill avant `fenetre_min`, même si le seuil de dépense est franchi. Le 48 h de fatigue est une hypothèse, pas un verdict.
+- `fenetre_min` = le plus grand de 3 jours ou du temps nécessaire pour 10 IC au coût cible, ancré sur l'objet jugé : `created_time` de l'ad set pour un ad set, de l'ad pour une ad, date de lancement pour la campagne. Un pack neuf dans une campagne qui roule a sa propre fenêtre. AUCUN verdict de kill avant `fenetre_min`, même si le seuil de dépense est franchi. Le 48 h de fatigue est une hypothèse, pas un verdict.
 - Seuil de kill relatif : 2x `cible_cpic` à 0 IC ; 3x `cible_cpic` à plus de 50 % d'écart avec la cible.
 - Ordre de jugement : la campagne d'abord, puis l'ad set, puis l'ad. Une ad « perdante » dans une campagne qui tient `cible_cpic` n'est pas un motif de tuer la dominante.
 - Kill des duds seulement. La no 1 (ad ou ad set dominant) qui fatigue ou rate : recommander un plafond de dépense par paliers de 10 à 20 points (plafond, `adset_spend_cap` ou plafond en %), jamais un kill, tant que la campagne tient `cible_cpic`. Kill de la no 1 seulement si la campagne entière rate `cible_cpic`.
@@ -49,7 +50,7 @@ Si `cible_cpic` n'est ni dans le manifeste ni dans une config, demande-la au pro
 - Pas de ventilation par placement : le placement reste plomberie secondaire `[hors-doctrine / secondaire]`.
 
 ### Scale surfing (lecture du matin) [rev. 2026-11]
-Dans la lecture du matin, ajoute l'écart entre coût réel et `cible_cpic` par campagne et le delta de budget du matin qui en découle, selon la grille de `doctrines/meta-campaign-lifecycle.md` §7 (cite-la, ne la recopie pas). Le delta est une recommandation : `budget_drop.py` en mode « surf » ne tourne que sous approbation explicite du propriétaire du compte.
+Dans la lecture du matin, ajoute l'écart entre coût réel et `cible_cpic` par campagne et le delta de budget du matin qui en découle, selon la grille unique de `doctrines/meta-campaign-lifecycle.md` §7 (5 cases, lue sur le coût réel par IC de la campagne contre `cible_cpic`, une fois par matin, après `fenetre_min`, jamais plus d'un palier par jour ; cite-la, ne la recopie pas). Le delta est une recommandation : `budget_drop.py --surf --campaign <id>` n'écrit rien sans `--go`, donné sous approbation explicite du propriétaire du compte.
 
 ## Données
 - Token et IDs de compte : lus depuis les variables d'environnement configurées dans `code/meta_lib.py` (voir ce fichier). Ne jamais les hardcoder dans un script d'analyse.
@@ -71,7 +72,7 @@ data, err = m._get(f"{ADSET_ID}/insights", {
 ## Ce que tu sors
 1. **Saturation**: fréquence + CPM par ad set, jour vs jour, selon les seuils ci-dessus. Flag les poches mortes (fréquence haute sur reach plafonné).
 2. **Gagnants/perdants** par coût par IC, flags INSUFFISANT / IMMATURE / MATURE selon la table. Aucun verdict sur un flag non MATURE.
-3. **Duds** [rev. 2026-11] : liste les ads sous le minimum de dépense de leur ad set après `fenetre_min` (« aucun » si vide). Ce sont les seules candidates au kill sans cascade.
+3. **Duds** [rev. 2026-11] : liste les ads ou ad sets qui franchissent le seuil relatif de kill sans être l'objet dominant de leur niveau (« aucun » si vide). Ce sont les seules candidates au kill sans cascade.
 3b. **Bodies/angles brûlés**: liste les textes/créas déjà tournés en masse (à NE PAS recycler dans le prochain batch). Crucial pour l'agent de création : cette liste DOIT apparaître dans le rapport, même si elle est vide (écrire « aucun »).
 4. **Lecture marché**: mouvements CPM (un compétiteur qui coupe, un refresh créatif qui améliore le ranking). Distingue honnêtement les causes plausibles, ne sur-affirme pas.
 5. **Recommandation**: quoi builder ensuite (angles, format), plafond par paliers plutôt que kill pour une dominante qui fatigue, et timing (learning phase vs deadlines). Si CBO, rappeler que le budget est au niveau campagne (un nouvel ad set fréquence-zéro peut être starvé).

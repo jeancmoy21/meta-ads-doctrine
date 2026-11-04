@@ -50,22 +50,30 @@
   {
    "id": "id_A",
    "name": "A",
-   "effective_status": "ACTIVE"
+   "effective_status": "ACTIVE",
+   "created_time": "2026-11-01T00:00:00-05:00"
   },
   {
    "id": "id_E",
    "name": "E",
-   "effective_status": "ACTIVE"
+   "effective_status": "ACTIVE",
+   "created_time": "2026-11-01T00:00:00-05:00"
   },
   {
    "id": "id_C",
    "name": "C",
-   "effective_status": "ACTIVE"
+   "effective_status": "ACTIVE",
+   "created_time": "2026-11-01T00:00:00-05:00"
   },
   {
    "id": "id_B",
    "name": "B",
-   "effective_status": "ACTIVE"
+   "effective_status": "ACTIVE",
+   "created_time": "2026-11-01T00:00:00-05:00"
   }
- ]
+ ],
+ "adsets_created": {
+  "S1": "2026-11-01T00:00:00-05:00",
+  "S2": "2026-11-01T00:00:00-05:00"
+ }
 }
