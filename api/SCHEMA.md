@@ -147,6 +147,22 @@ Règles, toutes appliquées par le validateur :
 `note`, `status`, `doctrine_gate`, `creative_build_note`, `budget_note`, `ads_placement_note`, `global_exclusions_note`, `audiences_resolved`, `redeploy_note`, tout champ `*_note` ou `_comment`.
 Exception : `creative_build_note` et `ads_placement_note` peuvent contenir des DIRECTIVES d'exécution (ex. override du caption, duplication des creatives dans chaque ad set). Le déploiement doit les lire et les suivre, mais elles ne remplacent jamais les champs structurés.
 
+## Champs ajoutés en rev. 2026-11
+
+Tous consommés par `code/validate_manifest.py` (sévérités dans la table « Ce que le validateur applique VRAIMENT »).
+
+| Champ | Niveau | Sens |
+|---|---|---|
+| `cible_cpic` | racine | OBLIGATOIRE. Coût cible par IC (nombre > 0). Base du seuil de kill relatif et de `fenetre_min`. |
+| `pack_type` | racine | `neuf` (défaut, 4 à 8 ads), `iteration` ou `prouve`. |
+| `message_id`, `asset_id` | ad | Optionnels. Plafonds par asset (3 messages distincts) et par message. |
+| `message_statut` | ad | `nouveau` (2 ads max par message) ou `prouve` (3 à 6 itérations). |
+| `avatar`, `avatar_statut` | ad set | Optionnels. `avatar_statut` : `neuf` ou `prouve`. |
+| `daily_min_spend_target_cad` | ad set | Optionnel. Somme <= 20 % du budget CBO. |
+| `exclusions_roles` | racine | `{audience_id: rôle}`. Rôles acceptés en prospection : `registered`, `buyers` (configurable, `META_EXCLUSION_ROLES_ALLOWED`). |
+| `conversions_disponibles` | racine | `{"achat": bool, "lead_qualifie": bool}`. |
+| `tier` | ad set | `retargeting` ou `remarketing` exempte l'ad set de la règle d'exclusion. |
+
 ## Exemple complet valide (mode complet, condensé, entièrement fictif)
 
 ```json
@@ -159,8 +175,12 @@ Exception : `creative_build_note` et `ads_placement_note` peuvent contenir des D
     "angles_morts": "Recours sceptique non couvert (pool d'assets limité).",
     "diversite": "Créatifs uniques de bout en bout, pas de hook-swap.",
     "format_note": "9:16 only = [hors-doctrine / secondaire].",
-    "pivot": "Événement one-shot, pas de cycle de pivot."
+    "plafonnement": "Événement one-shot, pas de SOP plafonnement prévue."
   },
+  "cible_cpic": 40,
+  "pack_type": "iteration",
+  "exclusions_roles": {"9999999999999": "registered"},
+  "conversions_disponibles": {"achat": false, "lead_qualifie": false},
   "ad_account_id": "act_1234567890",
   "objective": "OUTCOME_TRAFFIC",
   "optimization_goal": "LANDING_PAGE_VIEWS",
@@ -187,6 +207,9 @@ Exception : `creative_build_note` et `ads_placement_note` peuvent contenir des D
     {
       "name": "MonEvenement-Broad",
       "tier": "broad",
+      "avatar": "exemple-avatar",
+      "avatar_statut": "prouve",
+      "daily_min_spend_target_cad": 40,
       "default_status": "PAUSED",
       "optimization_goal": "LANDING_PAGE_VIEWS",
       "billing_event": "IMPRESSIONS",
@@ -203,6 +226,8 @@ Exception : `creative_build_note` et `ads_placement_note` peuvent contenir des D
   "video_ads": [
     {
       "name": "MonEvenement_HookA_Autorite",
+      "message_id": "msg-autorite",
+      "message_statut": "prouve",
       "vert_path": "/abs/path/exemple_hook_a.mp4",
       "sq_path": null,
       "format": "9:16 single (1080x1920, ~50s)",
@@ -252,6 +277,18 @@ Ce tableau est le contrat de vérité entre ce document et `code/validate_manife
 | `start_time` d'ad set sans aucune borne de fin | AVERTISSEMENT | |
 | `sq_path: null` (single-format 9:16) | AVERTISSEMENT | |
 | pool statique : `titles`/`descriptions` < 3 | ERREUR (< 3), l'idéal de ~5 n'est pas mécanisé | |
+| `cible_cpic` absent, non numérique ou <= 0 | ERREUR | rev. 2026-11 |
+| `pack_type` hors `neuf`/`iteration`/`prouve` | ERREUR | rev. 2026-11 |
+| pack `neuf` hors de 4 à 8 ads | ERREUR | rev. 2026-11, escape `_meta.pack_size_approved` |
+| CBO : somme de `daily_min_spend_target_cad` > 20 % du budget (ou valeur négative/non numérique) | ERREUR | rev. 2026-11, escape `_meta.minimums_approved` |
+| CBO : plus d'un événement d'optimisation entre les ad sets | ERREUR | rev. 2026-11 |
+| `message_id`/`asset_id` non chaîne, `message_statut` hors `nouveau`/`prouve` | ERREUR | rev. 2026-11 |
+| plus de 3 `message_id` distincts sur un `asset_id` dans un ad set | ERREUR | rev. 2026-11 |
+| plus de 2 ads sur un message `nouveau` ; plus de 6 sur un message `prouve` ; message marqué des deux statuts | ERREUR | rev. 2026-11 |
+| plus de 2 avatars `neuf` simultanés | AVERTISSEMENT | rev. 2026-11 |
+| exclusion en prospection d'un rôle hors `registered`/`buyers` | ERREUR | rev. 2026-11, escape `_meta.engagement_exclusion_approved` |
+| audience exclue en prospection sans rôle dans `exclusions_roles` | AVERTISSEMENT | rev. 2026-11 |
+| `conversions_disponibles` vraie alors qu'un ad set optimise sur IC ou lead brut | AVERTISSEMENT | rev. 2026-11, nouvel ad set requis |
 
 Les fichiers `<batch>.deploy.json`, `.deploy-result.json`, `.journal.json` et les caches d'assets ne sont PAS des manifestes : les passer au validateur produit des erreurs attendues et sans signification.
 

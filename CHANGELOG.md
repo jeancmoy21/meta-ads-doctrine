@@ -51,4 +51,4 @@ Révision inspirée de la formation « The Facebook Ads Blueprint » de Sam Pili
 - `validate_manifest.py` : `cible_cpic` obligatoire, pack de 4 à 8 ads, somme des minimums, un seul événement d'optimisation par CBO, avatars, rôles d'exclusion, plafonds par message et par asset.
 - `evening_kill.py` : seuil relatif et cascade à la place du seuil fixe, fenêtre par objet (`created_time`), registre enrichi ; options `--dry-run`, `--fixture <chemin>`.
 - `budget_drop.py` : mode `--surf`.
-- `code/tests/` : 13 tests (seuils, fenêtre par objet, cascade, grille surf, gate post ID) et 3 fixtures.
+- `code/tests/` : 14 tests (seuils, fenêtre par objet, cascade, grille surf, gate post ID) et 3 fixtures.

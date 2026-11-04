@@ -6,7 +6,7 @@
 
 ## Le changement de paradigme
 
-Depuis juillet, l'architecture de recommandation Meta a été remplacée par **Andromeda** (lancée techniquement le 22 avril). Andromeda est le premier filtre du pipeline créatif : elle "élague" des millions de variantes (volume x10 000 dû à l'IA générative) pour n'en transmettre que quelques milliers à Meta Lattice pour l'enchère finale.
+Depuis juillet, l'architecture de recommandation Meta a été remplacée par **Andromeda** (lancée techniquement le 22 avril). Andromeda est le premier filtre du pipeline créatif : elle "élague" des millions de variantes (volume multiplié par des milliers dû à l'IA générative) pour n'en transmettre que quelques milliers à Meta Lattice pour l'enchère finale.
 
 **Thèse centrale : le message EST le ciblage.**
 
@@ -52,13 +52,13 @@ On compte les MESSAGES (mécanisme nommé + poche sémantique visée), jamais le
 
 **Laisse asymétrique** : un multiplicateur d'accroche se tue à 2x `cible_cpic` dépensés à 0 IC, une fois `fenetre_min` écoulée (il n'enseigne rien en mourant). Un message neuf garde la laisse standard complète (il enseigne quelque chose sur une poche même en mourant).
 
-**Quota créatif** : max(2 ads par semaine, 1 ad par 10 k$ mensuels) de dépense du compte (règle empirique dite « des 10 000 »), converti en messages au ratio réel ads par message observé sur le compte. La qualité passe avant le nombre ; les formats et les variantes de headline d'une même idée ne comptent pas. Au lancement d'une campagne, banc = pack neuf de 4 à 8 ads. Un quota fixe de type « 25 à 30 messages par mois » n'a pas de sens en soi : il correspond à un niveau de dépense mensuelle précis (de l'ordre de 60 à 200 k$/mois selon la règle ci-dessus [calcul]). Compte pour 1 : un mécanisme jamais diffusé, peu importe le support (un static à angle neuf = une vidéo à angle neuf). Compte pour 0 : accroche différente sur un message au banc, reformulation du même mécanisme, changement de headline seul, nouveau visuel portant un mécanisme déjà diffusé (utile contre la fatigue visuelle, n'ajoute pas de poche).
+**Quota créatif** : max(2 ads par semaine, 1 ad par 10 k$ mensuels) de dépense du compte (repère empirique : au-delà d'un certain volume de dépense, le compte apprend plus par ses ads que par ses audiences, donc le rythme créatif doit suivre la dépense), converti en messages au ratio réel ads par message observé sur le compte. La qualité passe avant le nombre ; les formats et les variantes de headline d'une même idée ne comptent pas. Au lancement d'une campagne, banc = pack neuf de 4 à 8 ads. Un quota fixe de type « 25 à 30 messages par mois » n'a pas de sens en soi : il correspond à un niveau de dépense mensuelle précis (de l'ordre de plusieurs dizaines de milliers de dollars par mois selon la règle ci-dessus [calcul]). Compte pour 1 : un mécanisme jamais diffusé, peu importe le support (un static à angle neuf = une vidéo à angle neuf). Compte pour 0 : accroche différente sur un message au banc, reformulation du même mécanisme, changement de headline seul, nouveau visuel portant un mécanisme déjà diffusé (utile contre la fatigue visuelle, n'ajoute pas de poche).
 
 ---
 
 ## Les deux voies de passage à l'échelle (révisé [rev. 2026-11])
 
-**Voie 1 : Volume industriel** : 50 itérations/semaine (200/mois). Hors portée et contre-productive sous un budget moyen : empiler des packs sans hausser le budget met le compte en learning limited (30 ads par semaine à 1 000 $/jour, tout éteint).
+**Voie 1 : Volume industriel** : 50 itérations/semaine (200/mois). Hors portée et contre-productive sous un budget moyen : empiler des packs sans hausser le budget met le compte en learning limited (ex. lancer des dizaines d'ads par semaine sans hausser le budget dilue la dépense par ad sous le seuil d'apprentissage).
 
 **Voie 2 : Diversité de messagerie dans le quota (recommandée)** : le volume suit le quota créatif ci-dessus, chaque unité porte un message distinct.
 - Accès à des poches d'audience inexploitées, moins chères.

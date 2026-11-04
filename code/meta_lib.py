@@ -569,7 +569,7 @@ def fenetre_min(date_lancement, cible_cpic, budget_jour):
     return max(3.0, 10.0 * float(cible_cpic) / float(budget_jour))
 
 # Fuseau par défaut d'une date sans offset (variable d'environnement META_TZ, ex.
-# "America/Toronto" ; défaut UTC).
+# "Europe/Paris" ; défaut UTC).
 DEFAULT_TZ = os.environ.get("META_TZ", "UTC")
 
 def en_aware(dt, tz=None):
