@@ -12,6 +12,7 @@ doctrines/    doctrine stratégique Meta Ads
   andromeda-strategy.md       comment penser le créatif sous l'algorithme Andromeda
   meta-campaign-lifecycle.md  comment piloter une campagne dans le temps (harvest, kill/backtrack, wind-down)
   meta-tracking-doctrine.md   principes de tracking/attribution fiables (pixel + CAPI)
+  email-launch.md             courriel et SMS autour d'un lancement (flows, principes d'envoi)
 
 api/          contrat technique
   meta-api-errors.md          erreurs Graph API connues et fixes confirmés
@@ -24,6 +25,7 @@ code/         librairie + scripts
   budget_drop.py              exemple de job de baisse de budget planifiée
   evening_kill.py             exemple de re-check autonome (kill/backtrack)
   snooze_swap.py              exemple de countdown en place sur une seule ad
+  tests/                      tests des règles de seuil, de fenêtre et de cascade (python3 -m unittest)
 
 agents/       définitions d'agents Claude Code (pipeline analyse -> création -> déploiement)
   meta-analyse.md         diagnostic de performance (saturation, gagnants/perdants), aucune écriture
@@ -31,6 +33,8 @@ agents/       définitions d'agents Claude Code (pipeline analyse -> création -
   meta-deploy.md
   meta-tracking-audit.md  diagnostic du tracking (pixel, CAPI, dédup, EMQ), aucune écriture
 ```
+
+Historique des révisions : `CHANGELOG.md`.
 
 ## Prérequis
 
